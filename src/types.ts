@@ -40,6 +40,7 @@ export interface Sale {
   date: any; // Firestore Timestamp
   customer?: string;
   address?: string;
+  dueDate?: string; // ISO Date string
 }
 
 export interface UserProfile {

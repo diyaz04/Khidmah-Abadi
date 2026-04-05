@@ -1283,6 +1283,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [customer, setCustomer] = useState('');
   const [address, setAddress] = useState('');
+  const [dueDate, setDueDate] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [showInvoice, setShowInvoice] = useState<Sale | null>(null);
@@ -1317,6 +1318,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
   const exportToExcel = () => {
     const data = filteredSales.map(s => ({
       'Tanggal': formatDate(s.date),
+      'Jatuh Tempo': s.dueDate ? new Date(s.dueDate).toLocaleDateString('id-ID') : '-',
       'ID Transaksi': s.id,
       'Pelanggan': s.customer || '-',
       'Jumlah Item': s.items.length,
@@ -1337,6 +1339,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
     
     const tableData = filteredSales.map(s => [
       formatDate(s.date),
+      s.dueDate ? new Date(s.dueDate).toLocaleDateString('id-ID') : '-',
       s.id?.slice(0, 12) || '-',
       s.customer || '-',
       `${s.items.length} item`,
@@ -1345,7 +1348,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
     
     autoTable(doc, {
       startY: 30,
-      head: [['Tanggal', 'ID Transaksi', 'Pelanggan', 'Item', 'Total']],
+      head: [['Tanggal', 'Jatuh Tempo', 'ID Transaksi', 'Pelanggan', 'Item', 'Total']],
       body: tableData,
     });
     
@@ -1403,6 +1406,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
         totalAmount,
         customer,
         address,
+        dueDate,
         date: serverTimestamp()
       };
 
@@ -1421,6 +1425,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
       setCart([]);
       setCustomer('');
       setAddress('');
+      setDueDate('');
     } catch (error) {
       console.error(error);
       toast.error('Gagal memproses transaksi. Pastikan Anda memiliki akses staff/admin.');
@@ -1624,6 +1629,15 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                     className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Jatuh Tempo (Opsional)</label>
+                  <input 
+                    type="date" 
+                    value={dueDate}
+                    onChange={e => setDueDate(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1745,6 +1759,9 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                   <p className="text-xl font-black uppercase text-gray-900 tracking-widest">Invoice</p>
                   <p className="text-xs text-gray-500 font-mono">#{showInvoice.id}</p>
                   <p className="text-xs text-gray-500 mt-1">{formatDate(showInvoice.date)}</p>
+                  {showInvoice.dueDate && (
+                    <p className="text-[10px] text-red-600 font-bold mt-1 uppercase">Jatuh Tempo: {new Date(showInvoice.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                  )}
                 </div>
               </div>
 
