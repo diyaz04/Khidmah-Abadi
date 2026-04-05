@@ -6,16 +6,16 @@ service cloud.firestore {
     // ===============================================================
     //
     // Collection: products
-    // Fields: name (string), category (string), price (number), stock (number), unit (string), description (string)
+    // Fields: sku (string), name (string), category (string), price (number), stock (number), unit (string), description (string), imageUrl (string)
     //
     // Collection: procurements
-    // Fields: productId (string), productName (string), category (string), quantity (number), buyPrice (number), supplier (string), date (timestamp)
+    // Fields: productId (string), sku (string), productName (string), category (string), quantity (number), buyPrice (number), supplier (string), date (timestamp)
     //
     // Collection: sales
     // Fields: items (array), totalAmount (number), date (timestamp), customer (string)
     //
     // Collection: users
-    // Fields: displayName (string), email (string), role (string)
+    // Fields: displayName (string), email (string), role (string), isPendingAdmin (bool), isMainAdmin (bool), isApprovedViewer (bool)
     //
     // ===============================================================
 
@@ -24,37 +24,62 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function isAdmin() {
       return isAuthenticated() && 
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-         (request.auth.token.email == "diyaznajib.93@gmail.com" && request.auth.token.email_verified == true));
+          getUserData().role == 'admin') ||
+         (request.auth.token.email in ["diyaznajib.93@gmail.com", "admin@khidmah.com"] && request.auth.token.email_verified == true));
+    }
+
+    function isMainAdmin() {
+      return isAdmin() && 
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          getUserData().isMainAdmin == true) ||
+         (request.auth.token.email in ["diyaznajib.93@gmail.com", "admin@khidmah.com"] && request.auth.token.email_verified == true));
     }
 
     function isStaff() {
       return isAuthenticated() && 
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff', 'viewer']) ||
-         (request.auth.token.email == "diyaznajib.93@gmail.com" && request.auth.token.email_verified == true));
+          getUserData().role in ['admin', 'staff']) ||
+         (request.auth.token.email in ["diyaznajib.93@gmail.com", "admin@khidmah.com"] && request.auth.token.email_verified == true));
+    }
+
+    function isApprovedViewer() {
+      return isAuthenticated() && 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (getUserData().role == 'viewer' && getUserData().isApprovedViewer == true));
+    }
+
+    function canReadData() {
+      return isAdmin() || isStaff() || isApprovedViewer();
     }
 
     // Validation Functions
     function isValidProduct(data) {
+      let categories = ['Barang', 'Pangan', 'Jasa', 'Buah-buahan', 'Susu', 'Roti', 'Keringan', 'Sayuran', 'Bumbu Pelengkap masak'];
       return data.keys().hasAll(['sku', 'name', 'category', 'price', 'stock', 'unit']) &&
              data.sku is string && data.sku.size() > 0 && data.sku.size() < 50 &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.category in ['Barang', 'Pangan'] &&
+             data.category in categories &&
              data.price is number && data.price >= 0 &&
              data.stock is number &&
-             data.unit is string && data.unit.size() > 0 && data.unit.size() < 20;
+             data.unit is string && data.unit.size() > 0 && data.unit.size() < 20 &&
+             (!('description' in data) || data.description is string) &&
+             (!('imageUrl' in data) || data.imageUrl is string);
     }
 
     function isValidProcurement(data) {
+      let categories = ['Barang', 'Pangan', 'Jasa', 'Buah-buahan', 'Susu', 'Roti', 'Keringan', 'Sayuran', 'Bumbu Pelengkap masak'];
       return data.keys().hasAll(['productId', 'sku', 'productName', 'category', 'quantity', 'buyPrice', 'supplier', 'date']) &&
              data.productId is string &&
              data.sku is string &&
              data.productName is string &&
-             data.category in ['Barang', 'Pangan'] &&
+             data.category in categories &&
              data.quantity is number && data.quantity > 0 &&
              data.buyPrice is number && data.buyPrice >= 0 &&
              data.supplier is string && data.supplier.size() > 0 &&
@@ -65,39 +90,58 @@ service cloud.firestore {
       return data.keys().hasAll(['items', 'totalAmount', 'date']) &&
              data.items is list && data.items.size() > 0 &&
              data.totalAmount is number && data.totalAmount >= 0 &&
-             data.date is timestamp;
+             data.date is timestamp &&
+             (!('customer' in data) || data.customer is string);
     }
 
     function isValidUser(data) {
+      let allowedFields = ['uid', 'displayName', 'email', 'role', 'isPendingAdmin', 'isMainAdmin', 'isApprovedViewer', 'createdAt'];
       return data.keys().hasAll(['displayName', 'email', 'role']) &&
+             data.keys().hasOnly(allowedFields) &&
              data.displayName is string && data.displayName.size() > 0 &&
              data.email is string &&
              data.role in ['admin', 'staff', 'viewer'] &&
+             (!('uid' in data) || data.uid is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
              (!('isPendingAdmin' in data) || data.isPendingAdmin is bool) &&
-             (!('isMainAdmin' in data) || data.isMainAdmin is bool);
+             (!('isMainAdmin' in data) || data.isMainAdmin is bool) &&
+             (!('isApprovedViewer' in data) || data.isApprovedViewer is bool);
     }
 
     // Rules
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) && isValidUser(request.resource.data);
+      allow create: if isAuthenticated() && request.auth.uid == userId && 
+                      isValidUser(request.resource.data) &&
+                      (request.resource.data.role != 'admin' || 
+                       request.auth.token.email in ["diyaznajib.93@gmail.com", "admin@khidmah.com"]);
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin()) && 
+                      isValidUser(request.resource.data) &&
+                      (isAdmin() || (
+                        request.resource.data.role == resource.data.role &&
+                        (!('isPendingAdmin' in request.resource.data) || request.resource.data.isPendingAdmin == resource.data.isPendingAdmin) &&
+                        (!('isMainAdmin' in request.resource.data) || request.resource.data.isMainAdmin == resource.data.isMainAdmin) &&
+                        (!('isApprovedViewer' in request.resource.data) || request.resource.data.isApprovedViewer == resource.data.isApprovedViewer)
+                      ));
       allow delete: if isAdmin();
     }
 
     match /products/{productId} {
-      allow read: if isAuthenticated();
-      allow create, update: if isStaff() && isValidProduct(request.resource.data);
+      allow read: if canReadData();
+      allow create: if isStaff() && isValidProduct(request.resource.data);
+      allow update: if (isStaff() && isValidProduct(request.resource.data)) || 
+                      (isMainAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['description']));
       allow delete: if isAdmin();
     }
 
     match /procurements/{procurementId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadData();
       allow create: if isStaff() && isValidProcurement(request.resource.data);
       allow update, delete: if isAdmin();
     }
 
     match /sales/{saleId} {
-      allow read: if isAuthenticated();
+      allow read: if canReadData();
       allow create: if isStaff() && isValidSale(request.resource.data);
       allow update, delete: if isAdmin();
     }

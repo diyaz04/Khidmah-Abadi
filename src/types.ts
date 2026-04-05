@@ -1,4 +1,4 @@
-export type Category = 'Barang' | 'Pangan';
+export type Category = 'Barang' | 'Pangan' | 'Jasa' | 'Buah-buahan' | 'Susu' | 'Roti' | 'Keringan' | 'Sayuran' | 'Bumbu Pelengkap masak';
 
 export interface Product {
   id?: string;
@@ -9,6 +9,7 @@ export interface Product {
   stock: number;
   unit: string;
   description?: string;
+  imageUrl?: string;
   createdAt?: any; // Firestore Timestamp
 }
 
@@ -50,4 +51,5 @@ export interface UserProfile {
   role: 'admin' | 'staff' | 'viewer';
   isMainAdmin?: boolean;
   isPendingAdmin?: boolean;
+  isApprovedViewer?: boolean;
 }

@@ -7,11 +7,12 @@
       "properties": {
         "sku": { "type": "string", "description": "Product SKU/ID" },
         "name": { "type": "string", "description": "Product name" },
-        "category": { "type": "string", "enum": ["Barang", "Pangan"], "description": "Product category" },
+        "category": { "type": "string", "enum": ["Barang", "Pangan", "Jasa", "Buah-buahan", "Susu", "Roti", "Keringan", "Sayuran", "Bumbu Pelengkap masak"], "description": "Product category" },
         "price": { "type": "number", "description": "Selling price" },
         "stock": { "type": "number", "description": "Current stock level" },
         "unit": { "type": "string", "description": "Unit of measurement (pcs, kg, liter, etc.)" },
-        "description": { "type": "string", "description": "Optional product description" }
+        "description": { "type": "string", "description": "Optional product description" },
+        "imageUrl": { "type": "string", "description": "Optional product image URL" }
       },
       "required": ["sku", "name", "category", "price", "stock", "unit"]
     },
@@ -23,7 +24,7 @@
         "productId": { "type": "string", "description": "Reference to the product" },
         "sku": { "type": "string", "description": "Product SKU/ID" },
         "productName": { "type": "string", "description": "Name of the product at time of procurement" },
-        "category": { "type": "string", "enum": ["Barang", "Pangan"], "description": "Product category" },
+        "category": { "type": "string", "enum": ["Barang", "Pangan", "Jasa", "Buah-buahan", "Susu", "Roti", "Keringan", "Sayuran", "Bumbu Pelengkap masak"], "description": "Product category" },
         "quantity": { "type": "number", "description": "Quantity received" },
         "buyPrice": { "type": "number", "description": "Purchase price per unit" },
         "supplier": { "type": "string", "description": "Supplier name" },
@@ -63,7 +64,10 @@
       "properties": {
         "displayName": { "type": "string" },
         "email": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "staff"] }
+        "role": { "type": "string", "enum": ["admin", "staff", "viewer"] },
+        "isPendingAdmin": { "type": "boolean" },
+        "isMainAdmin": { "type": "boolean" },
+        "isApprovedViewer": { "type": "boolean" }
       },
       "required": ["displayName", "email", "role"]
     }

@@ -18,7 +18,9 @@ import {
   Trash2,
   Edit,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Eye,
+  Grid
 } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
 import { initializeApp, deleteApp } from 'firebase/app';
@@ -48,7 +50,8 @@ import {
   where,
   limit,
   getDocs,
-  setDoc
+  setDoc,
+  getDocFromServer
 } from 'firebase/firestore';
 import { auth, db, config } from './lib/firebase';
 import { cn, formatCurrency, formatDate } from './lib/utils';
@@ -202,6 +205,232 @@ function ConfirmDeleteModal({ isOpen, onClose, onConfirm, title, message }: any)
   );
 }
 
+const CATEGORIES: Category[] = ['Barang', 'Pangan', 'Jasa', 'Buah-buahan', 'Susu', 'Roti', 'Keringan', 'Sayuran', 'Bumbu Pelengkap masak'];
+
+const CATEGORY_IMAGES: Record<Category, string> = {
+  'Barang': 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&q=80',
+  'Pangan': 'https://images.unsplash.com/photo-1506484334402-40ff22e0d467?w=400&q=80',
+  'Jasa': 'https://images.unsplash.com/photo-1454165833767-027eeea15c3e?w=400&q=80',
+  'Buah-buahan': 'https://images.unsplash.com/photo-1619566636858-adf3ef46400b?w=400&q=80',
+  'Susu': 'https://images.unsplash.com/photo-1563636619-e910f01859ec?w=400&q=80',
+  'Roti': 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=400&q=80',
+  'Keringan': 'https://images.unsplash.com/photo-1599490659213-e2b9527bb087?w=400&q=80',
+  'Sayuran': 'https://images.unsplash.com/photo-1566385101042-1a0aa0c12e8c?w=400&q=80',
+  'Bumbu Pelengkap masak': 'https://images.unsplash.com/photo-1532336414038-cf19250c5757?w=400&q=80'
+};
+
+function Catalog({ products, userProfile }: { products: Product[], userProfile: UserProfile | null }) {
+  const [selectedCategory, setSelectedCategory] = useState<Category | 'Semua'>('Semua');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [isEditingDesc, setIsEditingDesc] = useState<string | null>(null);
+  const [editDescValue, setEditDescValue] = useState('');
+
+  const filteredProducts = products.filter(p => {
+    const matchesCategory = selectedCategory === 'Semua' || p.category === selectedCategory;
+    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
+
+  const handleSaveDescription = async (productId: string) => {
+    try {
+      await updateDoc(doc(db, 'products', productId), {
+        description: editDescValue
+      });
+      setIsEditingDesc(null);
+      toast.success('Deskripsi berhasil diperbarui!');
+    } catch (error) {
+      console.error(error);
+      toast.error('Gagal memperbarui deskripsi.');
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <h2 className="text-3xl font-black text-gray-900 tracking-tight">Katalog Produk</h2>
+          <p className="text-gray-500 mt-1">Jelajahi koleksi produk CV. Khidmah Abadi</p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Cari produk..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-64"
+            />
+          </div>
+          <select 
+            value={selectedCategory}
+            onChange={e => setSelectedCategory(e.target.value as any)}
+            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+          >
+            <option value="Semua">Semua Kategori</option>
+            {CATEGORIES.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {filteredProducts.map(product => (
+          <div 
+            key={product.id}
+            className="group bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col"
+          >
+            <div 
+              className="relative aspect-square overflow-hidden cursor-pointer"
+              onClick={() => setSelectedProduct(product)}
+            >
+              <img 
+                src={product.imageUrl || CATEGORY_IMAGES[product.category]} 
+                alt={product.name}
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+              />
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                <div className="bg-white/90 backdrop-blur px-4 py-2 rounded-full text-xs font-bold text-gray-900 flex items-center gap-2">
+                  <Eye className="w-3 h-3" />
+                  Lihat Detail
+                </div>
+              </div>
+              <div className="absolute top-3 left-3">
+                <span className="px-3 py-1 bg-white/90 backdrop-blur-md text-[10px] font-black uppercase tracking-wider text-blue-600 rounded-full shadow-sm border border-white/20">
+                  {product.category}
+                </span>
+              </div>
+            </div>
+            
+            <div className="p-5 flex-1 flex flex-col">
+              <div className="mb-3">
+                <h3 className="font-bold text-gray-900 line-clamp-1 group-hover:text-blue-600 transition-colors">{product.name}</h3>
+                <p className="text-xs text-gray-400 font-mono mt-0.5">{product.sku}</p>
+              </div>
+              
+              <div className="mt-auto space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-lg font-black text-blue-600">{formatCurrency(product.price)}</span>
+                  <span className={cn(
+                    "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
+                    product.stock > 10 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"
+                  )}>
+                    Stok: {product.stock} {product.unit}
+                  </span>
+                </div>
+
+                <div className="pt-4 border-t border-gray-50">
+                  {isEditingDesc === product.id ? (
+                    <div className="space-y-2">
+                      <textarea 
+                        value={editDescValue}
+                        onChange={e => setEditDescValue(e.target.value)}
+                        className="w-full p-2 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 outline-none h-20"
+                        placeholder="Masukkan deskripsi produk..."
+                      />
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => handleSaveDescription(product.id!)}
+                          className="flex-1 py-1.5 bg-blue-600 text-white text-[10px] font-bold rounded-lg"
+                        >
+                          Simpan
+                        </button>
+                        <button 
+                          onClick={() => setIsEditingDesc(null)}
+                          className="flex-1 py-1.5 bg-gray-100 text-gray-600 text-[10px] font-bold rounded-lg"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative group/desc">
+                      <p className="text-xs text-gray-500 line-clamp-2 italic">
+                        {product.description || 'Tidak ada deskripsi.'}
+                      </p>
+                      {userProfile?.isMainAdmin && (
+                        <button 
+                          onClick={() => {
+                            setIsEditingDesc(product.id!);
+                            setEditDescValue(product.description || '');
+                          }}
+                          className="absolute -top-1 -right-1 p-1 bg-white border border-gray-100 rounded-md shadow-sm opacity-0 group-hover/desc:opacity-100 transition-opacity"
+                        >
+                          <Edit className="w-3 h-3 text-blue-600" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Product Detail Modal */}
+      {selectedProduct && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
+            <div className="flex flex-col md:flex-row">
+              <div className="md:w-1/2 aspect-square md:aspect-auto">
+                <img 
+                  src={selectedProduct.imageUrl || CATEGORY_IMAGES[selectedProduct.category]} 
+                  alt={selectedProduct.name}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="md:w-1/2 p-8 flex flex-col">
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <span className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-black uppercase tracking-widest rounded-full">
+                      {selectedProduct.category}
+                    </span>
+                    <h3 className="text-2xl font-black text-gray-900 mt-3">{selectedProduct.name}</h3>
+                    <p className="text-sm text-gray-400 font-mono mt-1">{selectedProduct.sku}</p>
+                  </div>
+                  <button onClick={() => setSelectedProduct(null)} className="p-2 hover:bg-gray-50 rounded-xl transition-colors">
+                    <X className="w-6 h-6 text-gray-400" />
+                  </button>
+                </div>
+
+                <div className="space-y-6 flex-1">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-gray-50 rounded-2xl">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Harga Satuan</p>
+                      <p className="text-xl font-black text-blue-600">{formatCurrency(selectedProduct.price)}</p>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-2xl">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Stok Tersedia</p>
+                      <p className="text-xl font-black text-gray-900">{selectedProduct.stock} {selectedProduct.unit}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Deskripsi Produk</p>
+                    <p className="text-sm text-gray-600 leading-relaxed italic">
+                      {selectedProduct.description || 'Produk ini belum memiliki deskripsi detail.'}
+                    </p>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setSelectedProduct(null)}
+                  className="w-full py-4 bg-gray-900 text-white rounded-2xl font-bold mt-8 hover:bg-gray-800 transition-all shadow-lg"
+                >
+                  Tutup Detail
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Main Application ---
 
 export default function App() {
@@ -222,13 +451,33 @@ export default function App() {
   const [sales, setSales] = useState<Sale[]>([]);
 
   useEffect(() => {
+    // Test connection
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+          toast.error("Koneksi database bermasalah. Silakan periksa konfigurasi Firebase.");
+        }
+      }
+    };
+    testConnection();
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
         // Fetch or create user profile
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         if (userDoc.exists()) {
-          setUserProfile(userDoc.data() as UserProfile);
+          const profile = userDoc.data() as UserProfile;
+          setUserProfile(profile);
+          if (profile.role === 'admin' && !firebaseUser.emailVerified) {
+            toast.error('Email Anda belum diverifikasi. Beberapa fitur admin mungkin dibatasi oleh aturan keamanan.', { duration: 6000 });
+          }
+          if (profile.role === 'viewer') {
+            setActiveTab('catalog');
+          }
         } else {
           const isMainAdmin = firebaseUser.email === 'admin@khidmah.com' || firebaseUser.email === 'diyaznajib.93@gmail.com';
           const newProfile = {
@@ -256,14 +505,35 @@ export default function App() {
 
     const unsubProducts = onSnapshot(query(collection(db, 'products'), orderBy('name')), (snapshot) => {
       setProducts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Product)));
+    }, (error) => {
+      console.error('Products Snapshot Error:', error);
+      try {
+        handleFirestoreError(error, OperationType.GET, 'products');
+      } catch (err) {
+        // Error already logged
+      }
     });
 
     const unsubProcurements = onSnapshot(query(collection(db, 'procurements'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
       setProcurements(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Procurement)));
+    }, (error) => {
+      console.error('Procurements Snapshot Error:', error);
+      try {
+        handleFirestoreError(error, OperationType.GET, 'procurements');
+      } catch (err) {
+        // Error already logged
+      }
     });
 
     const unsubSales = onSnapshot(query(collection(db, 'sales'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
       setSales(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Sale)));
+    }, (error) => {
+      console.error('Sales Snapshot Error:', error);
+      try {
+        handleFirestoreError(error, OperationType.GET, 'sales');
+      } catch (err) {
+        // Error already logged
+      }
     });
 
     return () => {
@@ -401,6 +671,8 @@ export default function App() {
   }
 
   if (userProfile?.isPendingAdmin) {
+    const isViewerPending = userProfile?.role === 'viewer' && !userProfile?.isApprovedViewer;
+    
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col">
         <Toaster position="top-right" />
@@ -419,7 +691,7 @@ export default function App() {
            <div className="flex items-center gap-4">
              <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 rounded-full text-xs font-medium border border-amber-100">
                <AlertTriangle className="w-3 h-3" />
-               Menunggu Persetujuan Admin
+               {isViewerPending ? 'Menunggu Konfirmasi Katalog' : 'Menunggu Persetujuan Admin'}
              </div>
              <button onClick={handleLogout} className="text-gray-600 hover:text-red-600 flex items-center gap-2 text-sm font-medium">
                <LogOut className="w-4 h-4" />
@@ -434,8 +706,9 @@ export default function App() {
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Akses Tertunda</h2>
             <p className="text-gray-600 mb-6">
-              Sedang menunggu persetujuan admin utama untuk memberikan akses kepada anda. 
-              Saat ini Anda hanya dapat melihat fitur dasar sebagai Staff.
+              {isViewerPending 
+                ? 'Sedang menunggu konfirmasi dari admin utama untuk melihat katalog produk.' 
+                : 'Sedang menunggu persetujuan admin utama untuk memberikan akses kepada anda. Saat ini Anda hanya dapat melihat fitur dasar sebagai Staff.'}
             </p>
             <div className="space-y-3">
               <button 
@@ -592,20 +865,30 @@ export default function App() {
                 onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
               />
             )}
+            {userProfile?.role !== 'viewer' && (
+              <SidebarItem 
+                icon={Package} 
+                label="Produk" 
+                active={activeTab === 'products'} 
+                onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
+              />
+            )}
             <SidebarItem 
-              icon={Package} 
-              label="Produk" 
-              active={activeTab === 'products'} 
-              onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
+              icon={Grid} 
+              label="Katalog" 
+              active={activeTab === 'catalog'} 
+              onClick={() => { setActiveTab('catalog'); setIsSidebarOpen(false); }} 
             />
-            {userProfile?.role === 'admin' && (
+            {userProfile?.role !== 'viewer' && (
               <>
-                <SidebarItem 
-                  icon={Truck} 
-                  label="Pengadaan" 
-                  active={activeTab === 'procurement'} 
-                  onClick={() => { setActiveTab('procurement'); setIsSidebarOpen(false); }} 
-                />
+                {userProfile?.role === 'admin' && (
+                  <SidebarItem 
+                    icon={Truck} 
+                    label="Pengadaan" 
+                    active={activeTab === 'procurement'} 
+                    onClick={() => { setActiveTab('procurement'); setIsSidebarOpen(false); }} 
+                  />
+                )}
                 <SidebarItem 
                   icon={ShoppingCart} 
                   label="Penjualan" 
@@ -644,6 +927,20 @@ export default function App() {
               Keluar
             </button>
           </div>
+          {userProfile?.isMainAdmin && (
+            <div className="mt-auto p-4 border-t border-gray-100">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Debug Info (Admin Utama)</p>
+                <div className="space-y-1 text-[10px] text-gray-500 font-mono">
+                  <p>UID: {user?.uid.slice(0, 8)}...</p>
+                  <p>Email: {user?.email}</p>
+                  <p>Verified: {user?.emailVerified ? 'Yes' : 'No'}</p>
+                  <p>Role: {userProfile?.role}</p>
+                  <p>DB: {config.projectId.slice(0, 10)}...</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -679,9 +976,10 @@ export default function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
           {activeTab === 'dashboard' && userProfile?.role === 'admin' && <Dashboard products={products} sales={sales} />}
-          {activeTab === 'products' && <ProductManagement products={products} userRole={userProfile?.role} />}
+          {activeTab === 'products' && userProfile?.role !== 'viewer' && <ProductManagement products={products} userRole={userProfile?.role} />}
+          {activeTab === 'catalog' && <Catalog products={products} userProfile={userProfile} />}
           {activeTab === 'procurement' && userProfile?.role === 'admin' && <ProcurementManagement products={products} procurements={procurements} />}
-          {activeTab === 'sales' && userProfile?.role === 'admin' && <SalesManagement products={products} sales={sales} />}
+          {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} />}
           {activeTab === 'users' && userProfile?.isMainAdmin && <UserManagement />}
         </div>
       </main>
@@ -707,12 +1005,12 @@ function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) 
     amount: salesByDate[date]
   })).reverse().slice(-7);
 
-  const categoryData = [
-    { name: 'Barang', value: products.filter(p => p.category === 'Barang').length },
-    { name: 'Pangan', value: products.filter(p => p.category === 'Pangan').length },
-  ];
+  const categoryData = CATEGORIES.map(cat => ({
+    name: cat,
+    value: products.filter(p => p.category === cat).length
+  })).filter(c => c.value > 0);
 
-  const COLORS = ['#3B82F6', '#10B981'];
+  const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16', '#6366F1'];
 
   return (
     <div className="space-y-8">
@@ -850,7 +1148,8 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
     price: 0,
     stock: 0,
     unit: 'pcs',
-    description: ''
+    description: '',
+    imageUrl: ''
   });
 
   const isAdmin = userRole === 'admin';
@@ -885,7 +1184,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
       }
       setIsModalOpen(false);
       setEditingProduct(null);
-      setFormData({ sku: '', name: '', category: 'Barang', price: 0, stock: 0, unit: 'pcs', description: '' });
+      setFormData({ sku: '', name: '', category: 'Barang', price: 0, stock: 0, unit: 'pcs', description: '', imageUrl: '' });
     } catch (error) {
       console.error(error);
       toast.error('Gagal menyimpan produk.');
@@ -1036,8 +1335,9 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                     onChange={e => setFormData({...formData, category: e.target.value as Category})}
                     className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
                   >
-                    <option value="Barang">Barang</option>
-                    <option value="Pangan">Pangan</option>
+                    {CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -1073,6 +1373,16 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                     className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">URL Gambar (Opsional)</label>
+                <input 
+                  type="text" 
+                  value={formData.imageUrl}
+                  onChange={e => setFormData({...formData, imageUrl: e.target.value})}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi (Opsional)</label>
@@ -1887,6 +2197,13 @@ function UserManagement() {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'users'), (snapshot) => {
       setUsers(snapshot.docs.map(doc => ({ ...doc.data(), uid: doc.id } as UserProfile)));
+    }, (error) => {
+      console.error('Users Snapshot Error:', error);
+      try {
+        handleFirestoreError(error, OperationType.GET, 'users');
+      } catch (err) {
+        // Error already logged
+      }
     });
     return () => unsub();
   }, []);
@@ -1947,7 +2264,8 @@ function UserManagement() {
     try {
       await updateDoc(doc(db, 'users', uid), {
         role: 'viewer',
-        isPendingAdmin: false
+        isPendingAdmin: false,
+        isApprovedViewer: true
       });
       toast.success('User berhasil disetujui sebagai Viewer!');
     } catch (error) {
@@ -2023,14 +2341,14 @@ function UserManagement() {
                         {u.role === 'admin' ? 'Admin' : u.role === 'viewer' ? 'Viewer' : 'Staff'}
                         {u.isMainAdmin && ' (Utama)'}
                       </span>
-                      {u.isPendingAdmin && (
+                      {(u.isPendingAdmin || (u.role === 'viewer' && !u.isApprovedViewer)) && (
                         <span className="text-[10px] font-bold text-amber-600 uppercase">Menunggu Persetujuan</span>
                       )}
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {u.isPendingAdmin && (
+                      {(u.isPendingAdmin || (u.role === 'viewer' && !u.isApprovedViewer)) && (
                         <button 
                           onClick={() => {
                             if (u.role === 'admin') handleApproveAdmin(u.uid);
