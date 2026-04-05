@@ -9,6 +9,7 @@ export interface Product {
   stock: number;
   unit: string;
   description?: string;
+  createdAt?: any; // Firestore Timestamp
 }
 
 export interface Procurement {
@@ -38,6 +39,7 @@ export interface Sale {
   totalAmount: number;
   date: any; // Firestore Timestamp
   customer?: string;
+  address?: string;
 }
 
 export interface UserProfile {

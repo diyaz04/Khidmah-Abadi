@@ -34,7 +34,7 @@ service cloud.firestore {
     function isStaff() {
       return isAuthenticated() && 
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff']) ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'staff', 'viewer']) ||
          (request.auth.token.email == "diyaznajib.93@gmail.com" && request.auth.token.email_verified == true));
     }
 
@@ -72,7 +72,7 @@ service cloud.firestore {
       return data.keys().hasAll(['displayName', 'email', 'role']) &&
              data.displayName is string && data.displayName.size() > 0 &&
              data.email is string &&
-             data.role in ['admin', 'staff'] &&
+             data.role in ['admin', 'staff', 'viewer'] &&
              (!('isPendingAdmin' in data) || data.isPendingAdmin is bool) &&
              (!('isMainAdmin' in data) || data.isMainAdmin is bool);
     }

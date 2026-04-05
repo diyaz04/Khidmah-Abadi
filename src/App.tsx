@@ -70,6 +70,57 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 // --- Components ---
 
 const SidebarItem = ({ icon: Icon, label, active, onClick }: any) => (
@@ -122,6 +173,35 @@ const StatCard = ({ title, value, icon: Icon, trend, color }: any) => (
   </div>
 );
 
+function ConfirmDeleteModal({ isOpen, onClose, onConfirm, title, message }: any) {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 p-6">
+        <div className="flex items-center gap-3 mb-4 text-red-600">
+          <AlertTriangle className="w-6 h-6" />
+          <h3 className="text-lg font-bold">{title || 'Konfirmasi Hapus'}</h3>
+        </div>
+        <p className="text-gray-600 text-sm mb-6">{message || 'Apakah Anda yakin ingin menghapus data ini?'}</p>
+        <div className="flex gap-3">
+          <button 
+            onClick={onClose}
+            className="flex-1 px-4 py-2 border border-gray-200 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-colors"
+          >
+            Batal
+          </button>
+          <button 
+            onClick={() => { onConfirm(); onClose(); }}
+            className="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 transition-colors"
+          >
+            Ya, Hapus
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Main Application ---
 
 export default function App() {
@@ -150,13 +230,14 @@ export default function App() {
         if (userDoc.exists()) {
           setUserProfile(userDoc.data() as UserProfile);
         } else {
-          const isMainAdmin = firebaseUser.email === 'admin@khidmah.com';
+          const isMainAdmin = firebaseUser.email === 'admin@khidmah.com' || firebaseUser.email === 'diyaznajib.93@gmail.com';
           const newProfile = {
             uid: firebaseUser.uid,
             displayName: firebaseUser.displayName || (isMainAdmin ? 'Main Admin' : 'Staff'),
             email: firebaseUser.email || '',
             role: isMainAdmin ? 'admin' : 'staff',
-            isMainAdmin: isMainAdmin
+            isMainAdmin: isMainAdmin,
+            isPendingAdmin: !isMainAdmin
           };
           await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
           setUserProfile(newProfile as UserProfile);
@@ -225,6 +306,17 @@ export default function App() {
           try {
             const userCredential = await createUserWithEmailAndPassword(auth, loginEmail, password);
             await updateProfile(userCredential.user, { displayName: 'Admin Utama' });
+            
+            // Create user document in Firestore
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              uid: userCredential.user.uid,
+              displayName: 'Admin Utama',
+              email: loginEmail,
+              role: 'admin',
+              isMainAdmin: true,
+              isPendingAdmin: false
+            });
+
             toast.success('Akun admin utama berhasil disiapkan! Silakan masuk kembali.', { id: 'setup-admin' });
             // Coba login lagi otomatis
             await signInWithEmailAndPassword(auth, loginEmail, password);
@@ -522,22 +614,6 @@ export default function App() {
                 />
               </>
             )}
-            {userProfile?.role === 'staff' && (
-              <>
-                <SidebarItem 
-                  icon={Truck} 
-                  label="Pengadaan" 
-                  active={activeTab === 'procurement'} 
-                  onClick={() => { setActiveTab('procurement'); setIsSidebarOpen(false); }} 
-                />
-                <SidebarItem 
-                  icon={ShoppingCart} 
-                  label="Penjualan" 
-                  active={activeTab === 'sales'} 
-                  onClick={() => { setActiveTab('sales'); setIsSidebarOpen(false); }} 
-                />
-              </>
-            )}
             {userProfile?.isMainAdmin && (
               <SidebarItem 
                 icon={User} 
@@ -764,7 +840,9 @@ function StatStatStatCard({ title, value, icon: Icon, color }: any) {
 
 function ProductManagement({ products, userRole }: { products: Product[], userRole?: string }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'sku-asc' | 'sku-desc' | 'date-desc' | 'date-asc'>('name-asc');
   const [formData, setFormData] = useState<Partial<Product>>({
     sku: '',
     name: '',
@@ -778,6 +856,19 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
   const isAdmin = userRole === 'admin';
   const isViewer = userRole === 'viewer';
 
+  const sortedProducts = [...products].sort((a, b) => {
+    if (sortBy === 'name-asc') return a.name.localeCompare(b.name);
+    if (sortBy === 'name-desc') return b.name.localeCompare(a.name);
+    if (sortBy === 'sku-asc') return a.sku.localeCompare(b.sku);
+    if (sortBy === 'sku-desc') return b.sku.localeCompare(a.sku);
+    if (sortBy === 'date-desc' || sortBy === 'date-asc') {
+      const dateA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+      const dateB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+      return sortBy === 'date-desc' ? dateB - dateA : dateA - dateB;
+    }
+    return 0;
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) return;
@@ -786,7 +877,10 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
         await updateDoc(doc(db, 'products', editingProduct.id!), formData);
         toast.success('Produk diperbarui!');
       } else {
-        await addDoc(collection(db, 'products'), formData);
+        await addDoc(collection(db, 'products'), {
+          ...formData,
+          createdAt: serverTimestamp()
+        });
         toast.success('Produk ditambahkan!');
       }
       setIsModalOpen(false);
@@ -800,13 +894,11 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
 
   const handleDelete = async (id: string) => {
     if (!isAdmin) return;
-    if (window.confirm('Hapus produk ini?')) {
-      try {
-        await deleteDoc(doc(db, 'products', id));
-        toast.success('Produk dihapus.');
-      } catch (error) {
-        toast.error('Gagal menghapus.');
-      }
+    try {
+      await deleteDoc(doc(db, 'products', id));
+      toast.success('Produk dihapus.');
+    } catch (error) {
+      toast.error('Gagal menghapus.');
     }
   };
 
@@ -817,15 +909,32 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
           <h2 className="text-2xl font-bold text-gray-900">Manajemen Produk</h2>
           <p className="text-gray-500">Kelola daftar barang dan pangan</p>
         </div>
-        {isAdmin && (
-          <button 
-            onClick={() => { setIsModalOpen(true); setEditingProduct(null); }}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium flex items-center gap-2 shadow-sm"
-          >
-            <Plus className="w-5 h-5" />
-            Tambah Produk
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-gray-100 shadow-sm">
+            <label className="text-xs font-bold text-gray-400 uppercase">Urutkan:</label>
+            <select 
+              value={sortBy}
+              onChange={(e: any) => setSortBy(e.target.value)}
+              className="text-sm font-medium text-gray-600 outline-none bg-transparent"
+            >
+              <option value="name-asc">Nama (A-Z)</option>
+              <option value="name-desc">Nama (Z-A)</option>
+              <option value="sku-asc">SKU (A-Z)</option>
+              <option value="sku-desc">SKU (Z-A)</option>
+              <option value="date-desc">Terbaru</option>
+              <option value="date-asc">Terlama</option>
+            </select>
+          </div>
+          {isAdmin && (
+            <button 
+              onClick={() => { setIsModalOpen(true); setEditingProduct(null); }}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium flex items-center gap-2 shadow-sm"
+            >
+              <Plus className="w-5 h-5" />
+              Tambah Produk
+            </button>
+          )}
+        </div>
       </div>
 
       <Card>
@@ -843,7 +952,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {products.map(product => (
+              {sortedProducts.map(product => (
                 <tr key={product.id} className="text-sm hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-4 font-mono text-xs text-gray-500">{product.sku}</td>
                   <td className="px-4 py-4 font-medium text-gray-900">{product.name}</td>
@@ -867,7 +976,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                         <Edit className="w-4 h-4" />
                       </button>
                       <button 
-                        onClick={() => handleDelete(product.id!)}
+                        onClick={() => setIsDeleteConfirmOpen(product.id!)}
                         className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -880,6 +989,14 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
           </table>
         </div>
       </Card>
+
+      <ConfirmDeleteModal 
+        isOpen={!!isDeleteConfirmOpen}
+        onClose={() => setIsDeleteConfirmOpen(null)}
+        onConfirm={() => isDeleteConfirmOpen && handleDelete(isDeleteConfirmOpen)}
+        title="Hapus Produk?"
+        message="Apakah Anda yakin ingin menghapus produk ini? Tindakan ini tidak dapat dibatalkan."
+      />
 
       {/* Modal */}
       {isModalOpen && (
@@ -982,11 +1099,23 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
 
 function ProcurementManagement({ products, procurements }: { products: Product[], procurements: Procurement[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'name-asc' | 'name-desc'>('date-desc');
   const [formData, setFormData] = useState({
     productId: '',
     quantity: 0,
     buyPrice: 0,
     supplier: '',
+  });
+
+  const sortedProcurements = [...procurements].sort((a, b) => {
+    if (sortBy === 'date-desc' || sortBy === 'date-asc') {
+      const dateA = a.date?.toDate ? a.date.toDate().getTime() : new Date(a.date).getTime();
+      const dateB = b.date?.toDate ? b.date.toDate().getTime() : new Date(b.date).getTime();
+      return sortBy === 'date-desc' ? dateB - dateA : dateA - dateB;
+    }
+    if (sortBy === 'name-asc') return a.productName.localeCompare(b.productName);
+    if (sortBy === 'name-desc') return b.productName.localeCompare(a.productName);
+    return 0;
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1024,13 +1153,28 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
           <h2 className="text-2xl font-bold text-gray-900">Pengadaan Barang</h2>
           <p className="text-gray-500">Input stok masuk dari supplier</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium flex items-center gap-2 shadow-sm"
-        >
-          <Plus className="w-5 h-5" />
-          Input Pengadaan
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-gray-100 shadow-sm">
+            <label className="text-xs font-bold text-gray-400 uppercase">Urutkan:</label>
+            <select 
+              value={sortBy}
+              onChange={(e: any) => setSortBy(e.target.value)}
+              className="text-sm font-medium text-gray-600 outline-none bg-transparent"
+            >
+              <option value="date-desc">Terbaru</option>
+              <option value="date-asc">Terlama</option>
+              <option value="name-asc">Produk (A-Z)</option>
+              <option value="name-desc">Produk (Z-A)</option>
+            </select>
+          </div>
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium flex items-center gap-2 shadow-sm"
+          >
+            <Plus className="w-5 h-5" />
+            Input Pengadaan
+          </button>
+        </div>
       </div>
 
       <Card title="Riwayat Pengadaan">
@@ -1048,7 +1192,7 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {procurements.map(p => (
+              {sortedProcurements.map(p => (
                 <tr key={p.id} className="text-sm hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-4 text-gray-600">{formatDate(p.date)}</td>
                   <td className="px-4 py-4 font-mono text-xs text-gray-500">{p.sku}</td>
@@ -1134,8 +1278,11 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
 
 function SalesManagement({ products, sales }: { products: Product[], sales: Sale[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'customer-asc' | 'customer-desc'>('date-desc');
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [customer, setCustomer] = useState('');
+  const [address, setAddress] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [showInvoice, setShowInvoice] = useState<Sale | null>(null);
@@ -1154,6 +1301,17 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
     if (start && saleDate < start) return false;
     if (end && saleDate > end) return false;
     return true;
+  });
+
+  const sortedSales = [...filteredSales].sort((a, b) => {
+    if (sortBy === 'date-desc' || sortBy === 'date-asc') {
+      const dateA = a.date?.toDate ? a.date.toDate().getTime() : new Date(a.date).getTime();
+      const dateB = b.date?.toDate ? b.date.toDate().getTime() : new Date(b.date).getTime();
+      return sortBy === 'date-desc' ? dateB - dateA : dateA - dateB;
+    }
+    if (sortBy === 'customer-asc') return (a.customer || '').localeCompare(b.customer || '');
+    if (sortBy === 'customer-desc') return (b.customer || '').localeCompare(a.customer || '');
+    return 0;
   });
 
   const exportToExcel = () => {
@@ -1244,6 +1402,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
         items: cart,
         totalAmount,
         customer,
+        address,
         date: serverTimestamp()
       };
 
@@ -1261,6 +1420,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
       setIsModalOpen(false);
       setCart([]);
       setCustomer('');
+      setAddress('');
     } catch (error) {
       console.error(error);
       toast.error('Gagal memproses transaksi. Pastikan Anda memiliki akses staff/admin.');
@@ -1289,13 +1449,25 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
   };
 
   const handleDeleteSale = async (id: string) => {
-    if (window.confirm('Hapus transaksi ini? Stok produk tidak akan dikembalikan otomatis.')) {
+    console.log('Attempting to delete sale with ID:', id);
+    if (!id) {
+      toast.error('ID Transaksi tidak ditemukan.');
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'sales', id));
+      toast.success('Transaksi dihapus.');
+    } catch (error) {
+      console.error('Delete error:', error);
       try {
-        await deleteDoc(doc(db, 'sales', id));
-        toast.success('Transaksi dihapus.');
-      } catch (error) {
-        console.error(error);
-        toast.error('Gagal menghapus transaksi.');
+        handleFirestoreError(error, OperationType.DELETE, `sales/${id}`);
+      } catch (errInfo: any) {
+        const info = JSON.parse(errInfo.message);
+        if (info.error.includes('permission-denied')) {
+          toast.error('Akses ditolak. Hanya Admin yang dapat menghapus transaksi.');
+        } else {
+          toast.error('Gagal menghapus transaksi: ' + info.error);
+        }
       }
     }
   };
@@ -1308,6 +1480,19 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
           <p className="text-gray-500">Proses transaksi pelanggan</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-gray-100 shadow-sm">
+            <label className="text-xs font-bold text-gray-400 uppercase">Urutkan:</label>
+            <select 
+              value={sortBy}
+              onChange={(e: any) => setSortBy(e.target.value)}
+              className="text-sm font-medium text-gray-600 outline-none bg-transparent"
+            >
+              <option value="date-desc">Terbaru</option>
+              <option value="date-asc">Terlama</option>
+              <option value="customer-asc">Pelanggan (A-Z)</option>
+              <option value="customer-desc">Pelanggan (Z-A)</option>
+            </select>
+          </div>
           <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-gray-100 shadow-sm">
             <div className="flex items-center gap-1">
               <label className="text-xs font-medium text-gray-500">Dari:</label>
@@ -1367,7 +1552,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filteredSales.map(s => (
+              {sortedSales.map(s => (
                 <tr key={s.id} className="text-sm hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-4 text-gray-600">{formatDate(s.date)}</td>
                   <td className="px-4 py-4 font-mono text-xs text-gray-500">{s.id?.slice(0, 8)}...</td>
@@ -1385,7 +1570,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                         <span className="hidden sm:inline">Invoice</span>
                       </button>
                       <button 
-                        onClick={() => handleDeleteSale(s.id!)}
+                        onClick={() => setIsDeleteConfirmOpen(s.id!)}
                         className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                         title="Hapus Transaksi"
                       >
@@ -1399,6 +1584,14 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
           </table>
         </div>
       </Card>
+
+      <ConfirmDeleteModal 
+        isOpen={!!isDeleteConfirmOpen}
+        onClose={() => setIsDeleteConfirmOpen(null)}
+        onConfirm={() => isDeleteConfirmOpen && handleDeleteSale(isDeleteConfirmOpen)}
+        title="Hapus Transaksi?"
+        message="Apakah Anda yakin ingin menghapus transaksi ini? Stok produk tidak akan dikembalikan otomatis."
+      />
 
       {/* Sales Modal */}
       {isModalOpen && (
@@ -1421,6 +1614,19 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                     className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Alamat (Opsional)</label>
+                  <input 
+                    type="text" 
+                    value={address}
+                    onChange={e => setAddress(e.target.value)}
+                    placeholder="Alamat Pelanggan"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="flex gap-2 items-end">
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-gray-700 mb-1">Pilih Produk</label>
@@ -1542,9 +1748,17 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                 </div>
               </div>
 
-              <div className="mb-8">
-                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Ditujukan Kepada:</p>
-                <p className="text-sm font-semibold text-gray-900">{showInvoice.customer || 'Pelanggan Umum'}</p>
+              <div className="mb-8 grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-bold text-gray-400 uppercase mb-1">Ditujukan Kepada:</p>
+                  <p className="text-sm font-semibold text-gray-900">{showInvoice.customer || 'Pelanggan Umum'}</p>
+                </div>
+                {showInvoice.address && (
+                  <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Alamat:</p>
+                    <p className="text-sm text-gray-600 leading-tight">{showInvoice.address}</p>
+                  </div>
+                )}
               </div>
 
               <table className="w-full text-left mb-8">
