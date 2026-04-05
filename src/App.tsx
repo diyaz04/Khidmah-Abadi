@@ -133,7 +133,7 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [registerRole, setRegisterRole] = useState<'admin' | 'staff'>('staff');
+  const [registerRole, setRegisterRole] = useState<'admin' | 'staff' | 'viewer'>('staff');
   const [isLoginMode, setIsLoginMode] = useState(true);
 
   // Data State
@@ -229,7 +229,11 @@ export default function App() {
             // Coba login lagi otomatis
             await signInWithEmailAndPassword(auth, loginEmail, password);
           } catch (regError: any) {
-            toast.error('Gagal menyiapkan admin: ' + regError.message, { id: 'setup-admin' });
+            if (regError.code === 'auth/email-already-in-use') {
+              toast.error('Akun admin ini sudah terdaftar. Silakan masuk dengan password yang benar.', { id: 'setup-admin' });
+            } else {
+              toast.error('Gagal menyiapkan admin: ' + regError.message, { id: 'setup-admin' });
+            }
           }
         } else {
           throw loginError;
@@ -259,12 +263,12 @@ export default function App() {
       
       await updateProfile(newUser, { displayName });
 
-      const isPending = registerRole === 'admin';
+      const isPending = true; // All roles now require approval
       const newProfile: UserProfile = {
         uid: newUser.uid,
         displayName: displayName || 'User',
         email: registerEmail,
-        role: 'staff', // Everyone starts as staff
+        role: 'staff', // Everyone starts as staff in auth, but profile role is what we requested
         isPendingAdmin: isPending,
         isMainAdmin: false
       };
@@ -272,17 +276,9 @@ export default function App() {
       await setDoc(doc(db, 'users', newUser.uid), newProfile);
       setUserProfile(newProfile);
 
-      if (registerRole === 'admin') {
-        toast.success('Anda berhasil mengajukan diri sebagai admin, silahkan tunggu konfirmasi dari admin utama', { duration: 5000 });
-        // Stay logged in, UI will show pending message
-      } else {
-        toast.success('Anda berhasil membuat akun silahkan login untuk masuk', { duration: 5000 });
-        await signOut(auth);
-        setIsLoginMode(true);
-        setEmail('');
-        setPassword('');
-        setDisplayName('');
-      }
+      const roleName = registerRole === 'admin' ? 'admin' : registerRole === 'viewer' ? 'viewer' : 'staff';
+      toast.success(`Anda berhasil mendaftar sebagai ${roleName}, silahkan tunggu konfirmasi dari admin utama`, { duration: 5000 });
+      // Stay logged in, UI will show pending message
     } catch (error: any) {
       console.error(error);
       if (error.code === 'auth/operation-not-allowed') {
@@ -344,9 +340,9 @@ export default function App() {
             <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <AlertTriangle className="w-8 h-8 text-amber-600" />
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Akses Admin Tertunda</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Akses Tertunda</h2>
             <p className="text-gray-600 mb-6">
-              Sedang menunggu persetujuan admin utama menjadikan anda menjadi admin. 
+              Sedang menunggu persetujuan admin utama untuk memberikan akses kepada anda. 
               Saat ini Anda hanya dapat melihat fitur dasar sebagai Staff.
             </p>
             <div className="space-y-3">
@@ -399,11 +395,12 @@ export default function App() {
                   <label className="text-xs font-bold text-gray-400 uppercase ml-1">Pilih Akses / Role</label>
                   <select 
                     value={registerRole}
-                    onChange={e => setRegisterRole(e.target.value as 'admin' | 'staff')}
+                    onChange={e => setRegisterRole(e.target.value as 'admin' | 'staff' | 'viewer')}
                     className="w-full mt-1 px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                   >
-                    <option value="staff">Staff (Akses Langsung)</option>
+                    <option value="staff">Staff (Butuh Persetujuan)</option>
                     <option value="admin">Admin (Butuh Persetujuan)</option>
+                    <option value="viewer">Viewer (Butuh Persetujuan)</option>
                   </select>
                 </div>
               </>
@@ -510,6 +507,22 @@ export default function App() {
               onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
             />
             {userProfile?.role === 'admin' && (
+              <>
+                <SidebarItem 
+                  icon={Truck} 
+                  label="Pengadaan" 
+                  active={activeTab === 'procurement'} 
+                  onClick={() => { setActiveTab('procurement'); setIsSidebarOpen(false); }} 
+                />
+                <SidebarItem 
+                  icon={ShoppingCart} 
+                  label="Penjualan" 
+                  active={activeTab === 'sales'} 
+                  onClick={() => { setActiveTab('sales'); setIsSidebarOpen(false); }} 
+                />
+              </>
+            )}
+            {userProfile?.role === 'staff' && (
               <>
                 <SidebarItem 
                   icon={Truck} 
@@ -763,6 +776,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
   });
 
   const isAdmin = userRole === 'admin';
+  const isViewer = userRole === 'viewer';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1274,6 +1288,18 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
     pdf.save(`invoice-${sale.id}.pdf`);
   };
 
+  const handleDeleteSale = async (id: string) => {
+    if (window.confirm('Hapus transaksi ini? Stok produk tidak akan dikembalikan otomatis.')) {
+      try {
+        await deleteDoc(doc(db, 'sales', id));
+        toast.success('Transaksi dihapus.');
+      } catch (error) {
+        console.error(error);
+        toast.error('Gagal menghapus transaksi.');
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1349,13 +1375,23 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                   <td className="px-4 py-4 text-gray-600">{s.items.length} item</td>
                   <td className="px-4 py-4 font-semibold text-gray-900">{formatCurrency(s.totalAmount)}</td>
                   <td className="px-4 py-4 text-right">
-                    <button 
-                      onClick={() => setShowInvoice(s)}
-                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg flex items-center gap-1 ml-auto"
-                    >
-                      <Printer className="w-4 h-4" />
-                      Invoice
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => setShowInvoice(s)}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg flex items-center gap-1"
+                        title="Cetak Invoice"
+                      >
+                        <Printer className="w-4 h-4" />
+                        <span className="hidden sm:inline">Invoice</span>
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteSale(s.id!)}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Hapus Transaksi"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1562,6 +1598,16 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                     />
                   </div>
 
+                  {/* Visual Signature */}
+                  <div className="absolute top-8 left-1/2 -translate-x-1/2 pointer-events-none">
+                    <img 
+                      src="https://lh3.googleusercontent.com/d/1_JmAJCN_dL8QhxnyrYhyGOrdxoJY1hXj" 
+                      alt="Signature" 
+                      className="w-20 h-12 object-contain"
+                      crossOrigin="anonymous"
+                    />
+                  </div>
+
                   <div className="border-b border-gray-300 w-32 mx-auto mb-1"></div>
                   <p className="text-[10px] font-bold text-gray-900">Andika Fitrah Alam Jamil</p>
                   <p className="text-[8px] text-gray-500">Penjual</p>
@@ -1604,7 +1650,7 @@ function UserManagement() {
     email: '',
     password: '',
     displayName: '',
-    role: 'staff' as 'admin' | 'staff'
+    role: 'staff' as 'admin' | 'staff' | 'viewer'
   });
 
   useEffect(() => {
@@ -1634,7 +1680,8 @@ function UserManagement() {
         displayName: formData.displayName,
         email: registerEmail,
         role: formData.role,
-        isMainAdmin: false
+        isMainAdmin: false,
+        isPendingAdmin: false // Admin created users are immediately active
       });
 
       toast.success('Admin/Staff berhasil ditambahkan!');
@@ -1662,6 +1709,32 @@ function UserManagement() {
     } catch (error) {
       console.error(error);
       toast.error('Gagal menyetujui admin.');
+    }
+  };
+
+  const handleApproveViewer = async (uid: string) => {
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        role: 'viewer',
+        isPendingAdmin: false
+      });
+      toast.success('User berhasil disetujui sebagai Viewer!');
+    } catch (error) {
+      console.error(error);
+      toast.error('Gagal menyetujui viewer.');
+    }
+  };
+
+  const handleApproveStaff = async (uid: string) => {
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        role: 'staff',
+        isPendingAdmin: false
+      });
+      toast.success('User berhasil disetujui sebagai Staff!');
+    } catch (error) {
+      console.error(error);
+      toast.error('Gagal menyetujui staff.');
     }
   };
 
@@ -1712,13 +1785,15 @@ function UserManagement() {
                     <div className="flex flex-col gap-1">
                       <span className={cn(
                         "px-2 py-1 rounded-full text-xs font-medium w-fit",
-                        u.role === 'admin' ? "bg-blue-50 text-blue-600" : "bg-gray-50 text-gray-600"
+                        u.role === 'admin' ? "bg-blue-50 text-blue-600" : 
+                        u.role === 'viewer' ? "bg-amber-50 text-amber-600" :
+                        "bg-gray-50 text-gray-600"
                       )}>
-                        {u.role === 'admin' ? 'Admin' : 'Staff'}
+                        {u.role === 'admin' ? 'Admin' : u.role === 'viewer' ? 'Viewer' : 'Staff'}
                         {u.isMainAdmin && ' (Utama)'}
                       </span>
                       {u.isPendingAdmin && (
-                        <span className="text-[10px] font-bold text-amber-600 uppercase">Menunggu Persetujuan Admin</span>
+                        <span className="text-[10px] font-bold text-amber-600 uppercase">Menunggu Persetujuan</span>
                       )}
                     </div>
                   </td>
@@ -1726,9 +1801,13 @@ function UserManagement() {
                     <div className="flex items-center justify-end gap-2">
                       {u.isPendingAdmin && (
                         <button 
-                          onClick={() => handleApproveAdmin(u.uid)}
+                          onClick={() => {
+                            if (u.role === 'admin') handleApproveAdmin(u.uid);
+                            else if (u.role === 'viewer') handleApproveViewer(u.uid);
+                            else handleApproveStaff(u.uid);
+                          }}
                           className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                          title="Setujui sebagai Admin"
+                          title="Setujui Akses"
                         >
                           <CheckCircle2 className="w-4 h-4" />
                         </button>
@@ -1823,11 +1902,12 @@ function UserManagement() {
                 <label className="text-xs font-bold text-gray-400 uppercase ml-1">Role</label>
                 <select 
                   value={formData.role}
-                  onChange={e => setFormData({...formData, role: e.target.value as 'admin' | 'staff'})}
+                  onChange={e => setFormData({...formData, role: e.target.value as 'admin' | 'staff' | 'viewer'})}
                   className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 >
                   <option value="admin">Admin</option>
-                  <option value="staff">Staff (Lihat Stok Saja)</option>
+                  <option value="staff">Staff</option>
+                  <option value="viewer">Viewer (Hanya Lihat Produk)</option>
                 </select>
               </div>
               <div className="flex gap-4 pt-4">

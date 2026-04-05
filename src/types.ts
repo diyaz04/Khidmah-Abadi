@@ -44,7 +44,7 @@ export interface UserProfile {
   uid: string;
   displayName: string;
   email: string;
-  role: 'admin' | 'staff';
+  role: 'admin' | 'staff' | 'viewer';
   isMainAdmin?: boolean;
   isPendingAdmin?: boolean;
 }
