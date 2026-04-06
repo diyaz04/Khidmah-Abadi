@@ -31,7 +31,8 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          getUserData().role == 'admin') ||
+          getUserData().role == 'admin' && 
+          (!('isPendingAdmin' in getUserData()) || getUserData().isPendingAdmin == false)) ||
          (request.auth.token.email in ["diyaznajib.93@gmail.com", "admin@khidmah.com"] && request.auth.token.email_verified == true));
     }
 
@@ -45,7 +46,8 @@ service cloud.firestore {
     function isStaff() {
       return isAuthenticated() && 
         ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          getUserData().role in ['admin', 'staff']) ||
+          getUserData().role in ['admin', 'staff'] &&
+          (!('isPendingAdmin' in getUserData()) || getUserData().isPendingAdmin == false)) ||
          (request.auth.token.email in ["diyaznajib.93@gmail.com", "admin@khidmah.com"] && request.auth.token.email_verified == true));
     }
 
@@ -109,8 +111,13 @@ service cloud.firestore {
     }
 
     // Rules
+    match /test/connection {
+      allow read: if true;
+    }
+
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
       allow create: if isAuthenticated() && request.auth.uid == userId && 
                       isValidUser(request.resource.data) &&
                       (request.resource.data.role != 'admin' || 
@@ -135,13 +142,13 @@ service cloud.firestore {
     }
 
     match /procurements/{procurementId} {
-      allow read: if canReadData();
+      allow read: if isAdmin() || isStaff();
       allow create: if isStaff() && isValidProcurement(request.resource.data);
       allow update, delete: if isAdmin();
     }
 
     match /sales/{saleId} {
-      allow read: if canReadData();
+      allow read: if isAdmin() || isStaff();
       allow create: if isStaff() && isValidSale(request.resource.data);
       allow update, delete: if isAdmin();
     }

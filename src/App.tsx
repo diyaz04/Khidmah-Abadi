@@ -31,6 +31,7 @@ import {
   signOut,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   updateProfile,
   getAuth,
   User as FirebaseUser
@@ -233,6 +234,10 @@ function Catalog({ products, userProfile }: { products: Product[], userProfile: 
   });
 
   const handleSaveDescription = async (productId: string) => {
+    if (!userProfile?.isMainAdmin) {
+      toast.error('Hanya Admin Utama yang dapat mengubah deskripsi.');
+      return;
+    }
     try {
       await updateDoc(doc(db, 'products', productId), {
         description: editDescValue
@@ -444,6 +449,7 @@ export default function App() {
   const [displayName, setDisplayName] = useState('');
   const [registerRole, setRegisterRole] = useState<'admin' | 'staff' | 'viewer'>('staff');
   const [isLoginMode, setIsLoginMode] = useState(true);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   // Data State
   const [products, setProducts] = useState<Product[]>([]);
@@ -464,44 +470,42 @@ export default function App() {
     };
     testConnection();
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
-        // Fetch or create user profile
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userDoc.exists()) {
-          const profile = userDoc.data() as UserProfile;
-          setUserProfile(profile);
-          if (profile.role === 'admin' && !firebaseUser.emailVerified) {
-            toast.error('Email Anda belum diverifikasi. Beberapa fitur admin mungkin dibatasi oleh aturan keamanan.', { duration: 6000 });
+        // Use onSnapshot to listen for profile changes (like approval) in real-time
+        const unsubProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnap) => {
+          if (docSnap.exists()) {
+            const profile = docSnap.data() as UserProfile;
+            setUserProfile(profile);
+            if (profile.role === 'admin' && !firebaseUser.emailVerified) {
+              // Optional: toast warning
+            }
+            if (profile.role === 'viewer') {
+              setActiveTab('catalog');
+            }
+          } else {
+            // Profile doesn't exist yet (might be in process of being created by registration)
+            setUserProfile(null);
           }
-          if (profile.role === 'viewer') {
-            setActiveTab('catalog');
-          }
-        } else {
-          const isMainAdmin = firebaseUser.email === 'admin@khidmah.com' || firebaseUser.email === 'diyaznajib.93@gmail.com';
-          const newProfile = {
-            uid: firebaseUser.uid,
-            displayName: firebaseUser.displayName || (isMainAdmin ? 'Main Admin' : 'Staff'),
-            email: firebaseUser.email || '',
-            role: isMainAdmin ? 'admin' : 'staff',
-            isMainAdmin: isMainAdmin,
-            isPendingAdmin: !isMainAdmin
-          };
-          await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
-          setUserProfile(newProfile as UserProfile);
-        }
+          setLoading(false);
+        }, (error) => {
+          console.error("Profile Snapshot Error:", error);
+          setLoading(false);
+        });
+
+        return () => unsubProfile();
       } else {
         setUserProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!userProfile || userProfile.isPendingAdmin === true) return;
 
     const unsubProducts = onSnapshot(query(collection(db, 'products'), orderBy('name')), (snapshot) => {
       setProducts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Product)));
@@ -514,34 +518,40 @@ export default function App() {
       }
     });
 
-    const unsubProcurements = onSnapshot(query(collection(db, 'procurements'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
-      setProcurements(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Procurement)));
-    }, (error) => {
-      console.error('Procurements Snapshot Error:', error);
-      try {
-        handleFirestoreError(error, OperationType.GET, 'procurements');
-      } catch (err) {
-        // Error already logged
-      }
-    });
+    let unsubProcurements = () => {};
+    if (userProfile.role === 'admin') {
+      unsubProcurements = onSnapshot(query(collection(db, 'procurements'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
+        setProcurements(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Procurement)));
+      }, (error) => {
+        console.error('Procurements Snapshot Error:', error);
+        try {
+          handleFirestoreError(error, OperationType.GET, 'procurements');
+        } catch (err) {
+          // Error already logged
+        }
+      });
+    }
 
-    const unsubSales = onSnapshot(query(collection(db, 'sales'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
-      setSales(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Sale)));
-    }, (error) => {
-      console.error('Sales Snapshot Error:', error);
-      try {
-        handleFirestoreError(error, OperationType.GET, 'sales');
-      } catch (err) {
-        // Error already logged
-      }
-    });
+    let unsubSales = () => {};
+    if (userProfile.role === 'admin' || userProfile.role === 'staff') {
+      unsubSales = onSnapshot(query(collection(db, 'sales'), orderBy('date', 'desc'), limit(50)), (snapshot) => {
+        setSales(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Sale)));
+      }, (error) => {
+        console.error('Sales Snapshot Error:', error);
+        try {
+          handleFirestoreError(error, OperationType.GET, 'sales');
+        } catch (err) {
+          // Error already logged
+        }
+      });
+    }
 
     return () => {
       unsubProducts();
       unsubProcurements();
       unsubSales();
     };
-  }, [user]);
+  }, [userProfile]);
 
   const handleLogin = async () => {
     try {
@@ -556,6 +566,12 @@ export default function App() {
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isAuthLoading) return;
+    if (!email || !password) {
+      toast.error('Email/Username dan password wajib diisi.');
+      return;
+    }
+    setIsAuthLoading(true);
     try {
       let loginEmail = email;
       if (!email.includes('@')) {
@@ -591,7 +607,7 @@ export default function App() {
             // Coba login lagi otomatis
             await signInWithEmailAndPassword(auth, loginEmail, password);
           } catch (regError: any) {
-            if (regError.code === 'auth/email-already-in-use') {
+            if (regError.code === 'auth/email-already-in-use' || regError.message?.includes('auth/email-already-in-use')) {
               toast.error('Akun admin ini sudah terdaftar. Silakan masuk dengan password yang benar.', { id: 'setup-admin' });
             } else {
               toast.error('Gagal menyiapkan admin: ' + regError.message, { id: 'setup-admin' });
@@ -610,11 +626,24 @@ export default function App() {
       } else {
         toast.error('Gagal masuk. Silakan coba lagi.');
       }
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isAuthLoading) return;
+    if (!email || !password || !displayName) {
+      toast.error('Nama, Email/Username dan password wajib diisi.');
+      return;
+    }
+    if (password.length < 6) {
+      toast.error('Password minimal 6 karakter.');
+      return;
+    }
+    setIsAuthLoading(true);
+    const selectedRole = registerRole; // Capture the current state value
     try {
       let registerEmail = email;
       if (!email.includes('@')) {
@@ -630,7 +659,7 @@ export default function App() {
         uid: newUser.uid,
         displayName: displayName || 'User',
         email: registerEmail,
-        role: 'staff', // Everyone starts as staff in auth, but profile role is what we requested
+        role: selectedRole, // Use the captured role
         isPendingAdmin: isPending,
         isMainAdmin: false
       };
@@ -638,17 +667,42 @@ export default function App() {
       await setDoc(doc(db, 'users', newUser.uid), newProfile);
       setUserProfile(newProfile);
 
-      const roleName = registerRole === 'admin' ? 'admin' : registerRole === 'viewer' ? 'viewer' : 'staff';
+      const roleName = selectedRole === 'admin' ? 'admin' : selectedRole === 'viewer' ? 'viewer' : 'staff';
       toast.success(`Anda berhasil mendaftar sebagai ${roleName}, silahkan tunggu konfirmasi dari admin utama`, { duration: 5000 });
       // Stay logged in, UI will show pending message
     } catch (error: any) {
       console.error(error);
       if (error.code === 'auth/operation-not-allowed') {
         toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
-      } else if (error.code === 'auth/email-already-in-use') {
-        toast.error('Email atau username ini sudah terdaftar. Silakan gunakan email lain atau masuk ke akun Anda.');
+      } else if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
+        toast.error('Email atau username ini sudah terdaftar. Mengalihkan ke halaman Masuk...');
+        setIsLoginMode(true); // Switch to login mode automatically
       } else {
         toast.error('Gagal mendaftar: ' + error.message);
+      }
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast.error('Silakan masukkan email/username Anda untuk reset password.');
+      return;
+    }
+    let resetEmail = email;
+    if (!email.includes('@')) {
+      resetEmail = `${email}@khidmah.com`;
+    }
+    try {
+      await sendPasswordResetEmail(auth, resetEmail);
+      toast.success('Email reset password telah dikirim! Silakan cek kotak masuk Anda.');
+    } catch (error: any) {
+      console.error(error);
+      if (error.code === 'auth/user-not-found') {
+        toast.error('Email/Username tidak ditemukan.');
+      } else {
+        toast.error('Gagal mengirim email reset: ' + error.message);
       }
     }
   };
@@ -794,10 +848,23 @@ export default function App() {
             </div>
             <button
               type="submit"
-              className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg"
+              disabled={isAuthLoading}
+              className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoginMode ? 'Masuk' : 'Daftar'}
+              {isAuthLoading ? 'Memproses...' : (isLoginMode ? 'Masuk' : 'Daftar')}
             </button>
+
+            {isLoginMode && (
+              <div className="mt-2">
+                <button 
+                  type="button"
+                  onClick={handleForgotPassword}
+                  className="text-xs text-blue-600 hover:underline font-medium"
+                >
+                  Lupa Password?
+                </button>
+              </div>
+            )}
           </form>
 
           <div className="mb-6">
@@ -865,7 +932,7 @@ export default function App() {
                 onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
               />
             )}
-            {userProfile?.role !== 'viewer' && (
+            {(userProfile?.role === 'admin' || userProfile?.role === 'staff') && (
               <SidebarItem 
                 icon={Package} 
                 label="Produk" 
@@ -879,7 +946,7 @@ export default function App() {
               active={activeTab === 'catalog'} 
               onClick={() => { setActiveTab('catalog'); setIsSidebarOpen(false); }} 
             />
-            {userProfile?.role !== 'viewer' && (
+            {(userProfile?.role === 'admin' || userProfile?.role === 'staff') && (
               <>
                 {userProfile?.role === 'admin' && (
                   <SidebarItem 
@@ -2186,6 +2253,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
 function UserManagement() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     email: '',
@@ -2210,6 +2278,8 @@ function UserManagement() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     // Create a secondary app instance to create user without signing out current admin
     const secondaryApp = initializeApp(config, 'Secondary');
     const secondaryAuth = getAuth(secondaryApp);
@@ -2237,13 +2307,14 @@ function UserManagement() {
       setFormData({ email: '', password: '', displayName: '', role: 'staff' });
     } catch (error: any) {
       console.error(error);
-      if (error.code === 'auth/email-already-in-use') {
-        toast.error('Email atau username ini sudah terdaftar. Silakan gunakan email lain.');
+      if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
+        toast.error('Email atau username ini sudah terdaftar. Silakan gunakan email/username lain.');
       } else {
         toast.error('Gagal menambahkan user: ' + error.message);
       }
     } finally {
       await deleteApp(secondaryApp);
+      setIsSubmitting(false);
     }
   };
 
