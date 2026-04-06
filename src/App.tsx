@@ -378,8 +378,8 @@ function Catalog({ products, userProfile }: { products: Product[], userProfile: 
       {/* Product Detail Modal */}
       {selectedProduct && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
-            <div className="flex flex-col md:flex-row">
+          <div className="bg-white rounded-3xl w-full max-w-xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300 max-h-[90vh] flex flex-col">
+            <div className="flex flex-col md:flex-row overflow-y-auto">
               <div className="md:w-1/2 aspect-square md:aspect-auto">
                 <img 
                   src={selectedProduct.imageUrl || CATEGORY_IMAGES[selectedProduct.category]} 
@@ -474,7 +474,9 @@ export default function App() {
       setUser(firebaseUser);
       if (firebaseUser) {
         // Use onSnapshot to listen for profile changes (like approval) in real-time
-        const unsubProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnap) => {
+        console.log("Starting profile snapshot for UID:", firebaseUser.uid);
+        const unsubProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), async (docSnap) => {
+          console.log("Profile snapshot received for UID:", firebaseUser.uid, "Exists:", docSnap.exists());
           if (docSnap.exists()) {
             const profile = docSnap.data() as UserProfile;
             setUserProfile(profile);
@@ -485,12 +487,42 @@ export default function App() {
               setActiveTab('catalog');
             }
           } else {
-            // Profile doesn't exist yet (might be in process of being created by registration)
-            setUserProfile(null);
+            // Profile doesn't exist yet - Check for pre-registered profile by email
+            try {
+              const q = query(collection(db, 'users'), where('email', '==', firebaseUser.email), where('isPreRegistered', '==', true));
+              const querySnapshot = await getDocs(q);
+              
+              if (!querySnapshot.empty) {
+                const preRegDoc = querySnapshot.docs[0];
+                const preRegData = preRegDoc.data();
+                
+                // Claim the profile: Copy to users/{uid} and delete old doc
+                await setDoc(doc(db, 'users', firebaseUser.uid), {
+                  ...preRegData,
+                  uid: firebaseUser.uid,
+                  isPreRegistered: false, // No longer pre-registered
+                  lastLogin: serverTimestamp()
+                });
+                
+                await deleteDoc(doc(db, 'users', preRegDoc.id));
+                console.log("Profile claimed successfully for UID:", firebaseUser.uid);
+                // The snapshot will fire again for the new doc
+              } else {
+                setUserProfile(null);
+              }
+            } catch (claimError) {
+              console.error("Error claiming profile:", claimError);
+              setUserProfile(null);
+            }
           }
           setLoading(false);
         }, (error) => {
-          console.error("Profile Snapshot Error:", error);
+          console.error("Profile Snapshot Error for UID:", firebaseUser.uid, error);
+          try {
+            handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+          } catch (err) {
+            // Error already logged
+          }
           setLoading(false);
         });
 
@@ -618,13 +650,24 @@ export default function App() {
         }
       }
     } catch (error: any) {
-      console.error(error);
-      if (error.code === 'auth/operation-not-allowed') {
-        toast.error('Login Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
-      } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        toast.error('Email atau password salah.');
+      if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
+        // Known error, no need to log to console
+        if (error.code === 'auth/operation-not-allowed') {
+          toast.error('Login Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
+        } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+          toast.error('Email atau password salah.');
+        } else {
+          toast.error('Email atau username ini sudah terdaftar. Silakan masuk.');
+        }
       } else {
-        toast.error('Gagal masuk. Silakan coba lagi.');
+        console.error(error);
+        if (error.code === 'auth/operation-not-allowed') {
+          toast.error('Login Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
+        } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+          toast.error('Email atau password salah.');
+        } else {
+          toast.error('Gagal masuk. Silakan coba lagi.');
+        }
       }
     } finally {
       setIsAuthLoading(false);
@@ -634,6 +677,44 @@ export default function App() {
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isAuthLoading) return;
+
+    // If user is already authenticated (e.g. Google), we just need to create the profile
+    if (user && !userProfile) {
+      if (!displayName) {
+        toast.error('Nama wajib diisi.');
+        return;
+      }
+      setIsAuthLoading(true);
+      try {
+        const isPending = true;
+        const newProfile: UserProfile = {
+          uid: user.uid,
+          displayName: displayName || user.displayName || 'User',
+          email: user.email || '',
+          role: registerRole,
+          isPendingAdmin: isPending,
+          isMainAdmin: false
+        };
+        
+        // Check if this is a bootstrap admin email
+        if (user.email === 'diyaznajib.93@gmail.com' || user.email === 'admin@khidmah.com') {
+          newProfile.isPendingAdmin = false;
+          newProfile.isMainAdmin = true;
+          newProfile.role = 'admin';
+        }
+
+        await setDoc(doc(db, 'users', user.uid), newProfile);
+        setUserProfile(newProfile);
+        toast.success('Profil berhasil dibuat!');
+      } catch (error: any) {
+        console.error(error);
+        toast.error('Gagal membuat profil: ' + error.message);
+      } finally {
+        setIsAuthLoading(false);
+      }
+      return;
+    }
+
     if (!email || !password || !displayName) {
       toast.error('Nama, Email/Username dan password wajib diisi.');
       return;
@@ -671,14 +752,14 @@ export default function App() {
       toast.success(`Anda berhasil mendaftar sebagai ${roleName}, silahkan tunggu konfirmasi dari admin utama`, { duration: 5000 });
       // Stay logged in, UI will show pending message
     } catch (error: any) {
-      console.error(error);
-      if (error.code === 'auth/operation-not-allowed') {
-        toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
-      } else if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
+      if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
         toast.error('Email atau username ini sudah terdaftar. Mengalihkan ke halaman Masuk...');
         setIsLoginMode(true); // Switch to login mode automatically
+      } else if (error.code === 'auth/operation-not-allowed') {
+        toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
       } else {
-        toast.error('Gagal mendaftar: ' + error.message);
+        console.error(error);
+        toast.error('Gagal mendaftar: ' + (error.message || 'Terjadi kesalahan'));
       }
     } finally {
       setIsAuthLoading(false);
@@ -720,63 +801,6 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (userProfile?.isPendingAdmin) {
-    const isViewerPending = userProfile?.role === 'viewer' && !userProfile?.isApprovedViewer;
-    
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col">
-        <Toaster position="top-right" />
-        <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between sticky top-0 z-40">
-           <div className="flex items-center gap-3">
-             <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center border border-gray-100 overflow-hidden">
-               <img 
-                 src="https://lh3.googleusercontent.com/d/1THnm0UU2JX2F1yi8dcFCgOck0-6yG9Px" 
-                 alt="CV. Khidmah Abadi Logo" 
-                 className="w-8 h-8 object-contain"
-                 crossOrigin="anonymous"
-               />
-             </div>
-             <h1 className="text-xl font-bold text-gray-900">CV. Khidmah Abadi</h1>
-           </div>
-           <div className="flex items-center gap-4">
-             <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 rounded-full text-xs font-medium border border-amber-100">
-               <AlertTriangle className="w-3 h-3" />
-               {isViewerPending ? 'Menunggu Konfirmasi Katalog' : 'Menunggu Persetujuan Admin'}
-             </div>
-             <button onClick={handleLogout} className="text-gray-600 hover:text-red-600 flex items-center gap-2 text-sm font-medium">
-               <LogOut className="w-4 h-4" />
-               Keluar
-             </button>
-           </div>
-        </header>
-        <main className="flex-1 flex items-center justify-center p-6">
-          <Card className="max-w-md w-full text-center p-8">
-            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
-              <AlertTriangle className="w-8 h-8 text-amber-600" />
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Akses Tertunda</h2>
-            <p className="text-gray-600 mb-6">
-              {isViewerPending 
-                ? 'Sedang menunggu konfirmasi dari admin utama untuk melihat katalog produk.' 
-                : 'Sedang menunggu persetujuan admin utama untuk memberikan akses kepada anda. Saat ini Anda hanya dapat melihat fitur dasar sebagai Staff.'}
-            </p>
-            <div className="space-y-3">
-              <button 
-                onClick={() => window.location.reload()}
-                className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all"
-              >
-                Refresh Status
-              </button>
-              <p className="text-xs text-gray-400 italic">
-                Hubungi Admin Utama untuk mempercepat proses persetujuan.
-              </p>
-            </div>
-          </Card>
-        </main>
       </div>
     );
   }
@@ -889,6 +913,119 @@ export default function App() {
             Masuk dengan Google
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (!userProfile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center border border-gray-100">
+          <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg rotate-3 border border-gray-100 overflow-hidden">
+            <img 
+              src="https://lh3.googleusercontent.com/d/1THnm0UU2JX2F1yi8dcFCgOck0-6yG9Px" 
+              alt="CV. Khidmah Abadi Logo" 
+              className="w-16 h-16 object-contain"
+              crossOrigin="anonymous"
+            />
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Lengkapi Profil</h1>
+          <p className="text-gray-500 mb-8">Silakan lengkapi data diri Anda untuk melanjutkan</p>
+          
+          <form onSubmit={handleEmailRegister} className="space-y-4 mb-6">
+            <div className="text-left">
+              <label className="text-xs font-bold text-gray-400 uppercase ml-1">Nama Lengkap</label>
+              <input 
+                type="text" 
+                value={displayName || user.displayName || ''}
+                onChange={e => setDisplayName(e.target.value)}
+                placeholder="Nama Anda"
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                required
+              />
+            </div>
+            <div className="text-left">
+              <label className="text-xs font-bold text-gray-400 uppercase ml-1">Pilih Akses / Role</label>
+              <select 
+                value={registerRole}
+                onChange={e => setRegisterRole(e.target.value as 'admin' | 'staff' | 'viewer')}
+                className="w-full mt-1 px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="staff">Staff (Butuh Persetujuan)</option>
+                <option value="admin">Admin (Butuh Persetujuan)</option>
+                <option value="viewer">Viewer (Butuh Persetujuan)</option>
+              </select>
+            </div>
+            <button
+              type="submit"
+              disabled={isAuthLoading}
+              className="w-full py-4 px-6 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAuthLoading ? 'Memproses...' : 'Simpan Profil'}
+            </button>
+          </form>
+
+          <button onClick={handleLogout} className="text-gray-500 hover:text-red-600 text-sm font-medium">
+            Keluar & Gunakan Akun Lain
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (userProfile.isPendingAdmin && !userProfile.isMainAdmin) {
+    const isViewerPending = userProfile?.role === 'viewer' && !userProfile?.isApprovedViewer;
+    
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        <Toaster position="top-right" />
+        <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between sticky top-0 z-40">
+           <div className="flex items-center gap-3">
+             <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center border border-gray-100 overflow-hidden">
+               <img 
+                 src="https://lh3.googleusercontent.com/d/1THnm0UU2JX2F1yi8dcFCgOck0-6yG9Px" 
+                 alt="CV. Khidmah Abadi Logo" 
+                 className="w-8 h-8 object-contain"
+                 crossOrigin="anonymous"
+               />
+             </div>
+             <h1 className="text-xl font-bold text-gray-900">CV. Khidmah Abadi</h1>
+           </div>
+           <div className="flex items-center gap-4">
+             <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 rounded-full text-xs font-medium border border-amber-100">
+               <AlertTriangle className="w-3 h-3" />
+               {isViewerPending ? 'Menunggu Konfirmasi Katalog' : 'Menunggu Persetujuan Admin'}
+             </div>
+             <button onClick={handleLogout} className="text-gray-600 hover:text-red-600 flex items-center gap-2 text-sm font-medium">
+               <LogOut className="w-4 h-4" />
+               Keluar
+             </button>
+           </div>
+        </header>
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center border border-gray-100">
+            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertTriangle className="w-8 h-8 text-amber-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Akses Tertunda</h2>
+            <p className="text-gray-600 mb-6">
+              {isViewerPending 
+                ? 'Sedang menunggu konfirmasi dari admin utama untuk melihat katalog produk.' 
+                : 'Sedang menunggu persetujuan admin utama untuk memberikan akses kepada anda. Saat ini Anda hanya dapat melihat fitur dasar sebagai Staff.'}
+            </p>
+            <div className="space-y-3">
+              <button 
+                onClick={() => window.location.reload()}
+                className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all"
+              >
+                Refresh Status
+              </button>
+              <p className="text-xs text-gray-400 italic">
+                Hubungi Admin Utama untuk mempercepat proses persetujuan.
+              </p>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -1046,7 +1183,7 @@ export default function App() {
           {activeTab === 'products' && userProfile?.role !== 'viewer' && <ProductManagement products={products} userRole={userProfile?.role} />}
           {activeTab === 'catalog' && <Catalog products={products} userProfile={userProfile} />}
           {activeTab === 'procurement' && userProfile?.role === 'admin' && <ProcurementManagement products={products} procurements={procurements} />}
-          {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} />}
+          {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} userRole={userProfile?.role} />}
           {activeTab === 'users' && userProfile?.isMainAdmin && <UserManagement />}
         </div>
       </main>
@@ -1310,6 +1447,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
               <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-50">
                 <th className="px-4 py-3">ID Barang (SKU)</th>
                 <th className="px-4 py-3">Nama Produk</th>
+                <th className="px-4 py-3">Deskripsi</th>
                 <th className="px-4 py-3">Kategori</th>
                 <th className="px-4 py-3">Harga Jual</th>
                 <th className="px-4 py-3">Stok</th>
@@ -1322,6 +1460,9 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                 <tr key={product.id} className="text-sm hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-4 font-mono text-xs text-gray-500">{product.sku}</td>
                   <td className="px-4 py-4 font-medium text-gray-900">{product.name}</td>
+                  <td className="px-4 py-4 text-gray-500 text-xs max-w-[200px] truncate" title={product.description}>
+                    {product.description || '-'}
+                  </td>
                   <td className="px-4 py-4">
                     <span className={cn(
                       "px-2 py-1 rounded-full text-xs font-medium",
@@ -1367,12 +1508,12 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
       {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900">{editingProduct ? 'Edit Produk' : 'Tambah Produk Baru'}</h3>
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-gray-50 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">ID Barang (SKU)</label>
                 <input 
@@ -1381,7 +1522,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                   value={formData.sku}
                   onChange={e => setFormData({...formData, sku: e.target.value})}
                   placeholder="Contoh: BRG-001"
-                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                 />
               </div>
               <div>
@@ -1391,7 +1532,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                   type="text" 
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1400,7 +1541,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                   <select 
                     value={formData.category}
                     onChange={e => setFormData({...formData, category: e.target.value as Category})}
-                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                   >
                     {CATEGORIES.map(cat => (
                       <option key={cat} value={cat}>{cat}</option>
@@ -1415,7 +1556,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                     placeholder="pcs, kg, dll"
                     value={formData.unit}
                     onChange={e => setFormData({...formData, unit: e.target.value})}
-                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                   />
                 </div>
               </div>
@@ -1427,7 +1568,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                     type="number" 
                     value={formData.price}
                     onChange={e => setFormData({...formData, price: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                   />
                 </div>
                 <div>
@@ -1437,7 +1578,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                     type="number" 
                     value={formData.stock}
                     onChange={e => setFormData({...formData, stock: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                   />
                 </div>
               </div>
@@ -1448,7 +1589,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                   value={formData.imageUrl}
                   onChange={e => setFormData({...formData, imageUrl: e.target.value})}
                   placeholder="https://images.unsplash.com/..."
-                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                 />
               </div>
               <div>
@@ -1456,13 +1597,13 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
                 <textarea 
                   value={formData.description}
                   onChange={e => setFormData({...formData, description: e.target.value})}
-                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                   rows={3}
                 />
               </div>
               <button 
                 type="submit"
-                className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+                className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm flex-shrink-0"
               >
                 {editingProduct ? 'Simpan Perubahan' : 'Tambah Produk'}
               </button>
@@ -1587,12 +1728,12 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900">Input Pengadaan</h3>
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-gray-50 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Pilih Produk</label>
                 <select 
@@ -1641,7 +1782,7 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
               </div>
               <button 
                 type="submit"
-                className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+                className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm flex-shrink-0"
               >
                 Simpan Pengadaan
               </button>
@@ -1653,7 +1794,7 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
   );
 }
 
-function SalesManagement({ products, sales }: { products: Product[], sales: Sale[] }) {
+function SalesManagement({ products, sales, userRole }: { products: Product[], sales: Sale[], userRole?: string }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'customer-asc' | 'customer-desc'>('date-desc');
@@ -1753,6 +1894,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
         productId: product.id!,
         sku: product.sku,
         name: product.name,
+        description: product.description || '',
         quantity,
         price: product.price,
         total: quantity * product.price
@@ -1951,13 +2093,15 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                         <Printer className="w-4 h-4" />
                         <span className="hidden sm:inline">Invoice</span>
                       </button>
-                      <button 
-                        onClick={() => setIsDeleteConfirmOpen(s.id!)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Hapus Transaksi"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {userRole === 'admin' && (
+                        <button 
+                          onClick={() => setIsDeleteConfirmOpen(s.id!)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Hapus Transaksi"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1978,8 +2122,8 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
       {/* Sales Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900">Transaksi Baru</h3>
               <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-gray-50 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
@@ -2059,6 +2203,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                   <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase">
                     <tr>
                       <th className="px-4 py-2">Produk</th>
+                      <th className="px-4 py-2">Deskripsi</th>
                       <th className="px-4 py-2">Harga</th>
                       <th className="px-4 py-2">Qty</th>
                       <th className="px-4 py-2">Total</th>
@@ -2069,6 +2214,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                     {cart.map(item => (
                       <tr key={item.productId} className="text-sm">
                         <td className="px-4 py-3 font-medium">{item.name}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500 max-w-[150px] truncate" title={item.description}>{item.description || '-'}</td>
                         <td className="px-4 py-3">{formatCurrency(item.price)}</td>
                         <td className="px-4 py-3">{item.quantity}</td>
                         <td className="px-4 py-3 font-semibold">{formatCurrency(item.total)}</td>
@@ -2081,7 +2227,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                     ))}
                     {cart.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-4 py-8 text-center text-gray-400">Keranjang masih kosong.</td>
+                        <td colSpan={6} className="px-4 py-8 text-center text-gray-400">Keranjang masih kosong.</td>
                       </tr>
                     )}
                   </tbody>
@@ -2109,13 +2255,14 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
       {/* Invoice Modal */}
       {showInvoice && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900">Invoice Transaksi</h3>
               <button onClick={() => setShowInvoice(null)} className="p-2 hover:bg-gray-50 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
             
-            <div id="invoice-content" className="p-8 bg-white">
+            <div className="flex-1 overflow-y-auto">
+              <div id="invoice-content" className="p-8 bg-white">
               <div className="flex justify-between items-start mb-8 border-b-2 border-blue-600 pb-6">
                 <div className="flex items-center gap-4">
                   <img 
@@ -2160,6 +2307,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                   <tr className="text-xs font-bold text-gray-400 uppercase">
                     <th className="py-2">ID Barang</th>
                     <th className="py-2">Item</th>
+                    <th className="py-2">Deskripsi</th>
                     <th className="py-2 text-center">Qty</th>
                     <th className="py-2 text-right">Harga</th>
                     <th className="py-2 text-right">Total</th>
@@ -2170,6 +2318,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                     <tr key={i} className="text-sm">
                       <td className="py-3 font-mono text-[10px] text-gray-500">{item.sku}</td>
                       <td className="py-3 font-medium text-gray-900">{item.name}</td>
+                      <td className="py-3 text-[10px] text-gray-500 max-w-[150px] truncate" title={item.description}>{item.description || '-'}</td>
                       <td className="py-3 text-center text-gray-600">{item.quantity}</td>
                       <td className="py-3 text-right text-gray-600">{formatCurrency(item.price)}</td>
                       <td className="py-3 text-right font-semibold text-gray-900">{formatCurrency(item.total)}</td>
@@ -2178,7 +2327,7 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                 </tbody>
                 <tfoot className="border-t-2 border-gray-100">
                   <tr>
-                    <td colSpan={4} className="py-4 text-right font-bold text-gray-900">TOTAL</td>
+                    <td colSpan={5} className="py-4 text-right font-bold text-gray-900">TOTAL</td>
                     <td className="py-4 text-right font-black text-blue-600 text-lg">{formatCurrency(showInvoice.totalAmount)}</td>
                   </tr>
                 </tfoot>
@@ -2226,21 +2375,29 @@ function SalesManagement({ products, sales }: { products: Product[], sales: Sale
                 <p className="text-[10px] text-gray-400 italic">"Kepuasan pelanggan adalah prioritas kami"</p>
               </div>
             </div>
+          </div>
 
-            <div className="p-6 bg-gray-50 flex gap-4">
+          <div className="p-6 bg-gray-50 flex flex-col sm:flex-row gap-3 flex-shrink-0">
               <button 
                 onClick={() => downloadPDF(showInvoice)}
-                className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-2"
+                className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
               >
                 <Download className="w-5 h-5" />
                 Download PDF
               </button>
               <button 
                 onClick={() => window.print()}
-                className="flex-1 py-3 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2"
+                className="flex-1 py-3 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
               >
                 <Printer className="w-5 h-5" />
                 Cetak
+              </button>
+              <button 
+                onClick={() => setShowInvoice(null)}
+                className="flex-1 py-3 bg-gray-200 text-gray-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-300 transition-colors"
+              >
+                <X className="w-5 h-5" />
+                Tutup
               </button>
             </div>
           </div>
@@ -2255,6 +2412,7 @@ function UserManagement() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -2280,42 +2438,113 @@ function UserManagement() {
     e.preventDefault();
     if (isSubmitting) return;
     setIsSubmitting(true);
-    // Create a secondary app instance to create user without signing out current admin
-    const secondaryApp = initializeApp(config, 'Secondary');
-    const secondaryAuth = getAuth(secondaryApp);
-    
+
     try {
       let registerEmail = formData.email;
       if (!registerEmail.includes('@')) {
         registerEmail = `${registerEmail}@khidmah.com`;
       }
 
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, registerEmail, formData.password);
-      const newUser = userCredential.user;
-      
-      await setDoc(doc(db, 'users', newUser.uid), {
-        uid: newUser.uid,
-        displayName: formData.displayName,
-        email: registerEmail,
-        role: formData.role,
-        isMainAdmin: false,
-        isPendingAdmin: false // Admin created users are immediately active
-      });
+      if (editingUser) {
+        // Update existing user in Firestore
+        await updateDoc(doc(db, 'users', editingUser.uid), {
+          displayName: formData.displayName,
+          role: formData.role,
+          isPendingAdmin: false,
+          isApprovedViewer: formData.role === 'viewer'
+        });
+        toast.success('User berhasil diperbarui!');
+      } else {
+        // Create a unique secondary app instance to avoid "Duplicate App" errors
+        const appName = `Secondary-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        const secondaryApp = initializeApp(config, appName);
+        const secondaryAuth = getAuth(secondaryApp);
+        
+        try {
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, registerEmail, formData.password);
+          const newUser = userCredential.user;
+          
+          await setDoc(doc(db, 'users', newUser.uid), {
+            uid: newUser.uid,
+            displayName: formData.displayName,
+            email: registerEmail,
+            role: formData.role,
+            isMainAdmin: false,
+            isPendingAdmin: false, // Admin created users are immediately active
+            isApprovedViewer: formData.role === 'viewer',
+            createdAt: serverTimestamp()
+          });
 
-      toast.success('Admin/Staff berhasil ditambahkan!');
+          toast.success('User baru berhasil ditambahkan!');
+        } catch (authError: any) {
+          console.error('Auth Error in UserManagement:', authError);
+          if (authError.code === 'auth/email-already-in-use' || authError.message?.includes('auth/email-already-in-use')) {
+            // Check if user exists in Firestore
+            const q = query(collection(db, 'users'), where('email', '==', registerEmail));
+            const querySnapshot = await getDocs(q);
+            
+            if (!querySnapshot.empty) {
+              const existingDoc = querySnapshot.docs[0];
+              await updateDoc(doc(db, 'users', existingDoc.id), {
+                displayName: formData.displayName,
+                role: formData.role,
+                isPendingAdmin: false,
+                isApprovedViewer: formData.role === 'viewer'
+              });
+              toast.success('User sudah terdaftar di sistem, data telah diperbarui dan diaktifkan!');
+            } else {
+              // User in Auth but not Firestore - Create a pre-registered profile
+              // Use a random ID for now, will be claimed on first login
+              await addDoc(collection(db, 'users'), {
+                displayName: formData.displayName,
+                email: registerEmail,
+                role: formData.role,
+                isMainAdmin: false,
+                isPendingAdmin: false,
+                isApprovedViewer: formData.role === 'viewer',
+                isPreRegistered: true,
+                createdAt: serverTimestamp()
+              });
+              toast.success('User sudah memiliki akun login. Profil telah disiapkan dan akan aktif saat user login kembali.');
+            }
+          } else if (authError.code === 'auth/operation-not-allowed') {
+            toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
+          } else if (authError.code === 'auth/weak-password') {
+            toast.error('Password terlalu lemah. Minimal 6 karakter.');
+          } else if (authError.code === 'auth/invalid-email') {
+            toast.error('Format email tidak valid.');
+          } else {
+            toast.error('Gagal membuat akun di Firebase Auth: ' + authError.message);
+          }
+        } finally {
+          try {
+            await deleteApp(secondaryApp);
+          } catch (e) {
+            console.error('Error deleting secondary app:', e);
+          }
+        }
+      }
+
       setIsModalOpen(false);
+      setEditingUser(null);
       setFormData({ email: '', password: '', displayName: '', role: 'staff' });
     } catch (error: any) {
       console.error(error);
-      if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
-        toast.error('Email atau username ini sudah terdaftar. Silakan gunakan email/username lain.');
-      } else {
-        toast.error('Gagal menambahkan user: ' + error.message);
-      }
+      toast.error('Gagal memproses user: ' + (error.message || 'Terjadi kesalahan'));
     } finally {
-      await deleteApp(secondaryApp);
       setIsSubmitting(false);
     }
+  };
+
+  const handleEdit = (user: UserProfile) => {
+    setEditingUser(user);
+    setFormData({
+      email: user.email,
+      password: '', // Password cannot be retrieved
+      displayName: user.displayName,
+      role: user.role
+    });
+    setIsModalOpen(true);
   };
 
   const handleApproveAdmin = async (uid: string) => {
@@ -2412,13 +2641,25 @@ function UserManagement() {
                         {u.role === 'admin' ? 'Admin' : u.role === 'viewer' ? 'Viewer' : 'Staff'}
                         {u.isMainAdmin && ' (Utama)'}
                       </span>
-                      {(u.isPendingAdmin || (u.role === 'viewer' && !u.isApprovedViewer)) && (
+                      {u.isPreRegistered && (
+                        <span className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full text-[10px] font-bold uppercase w-fit">
+                          Pre-Registered
+                        </span>
+                      )}
+                      {(u.isPendingAdmin || (u.role === 'viewer' && !u.isApprovedViewer)) && !u.isPreRegistered && (
                         <span className="text-[10px] font-bold text-amber-600 uppercase">Menunggu Persetujuan</span>
                       )}
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      <button 
+                        onClick={() => handleEdit(u)}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Edit User"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
                       {(u.isPendingAdmin || (u.role === 'viewer' && !u.isApprovedViewer)) && (
                         <button 
                           onClick={() => {
@@ -2482,12 +2723,12 @@ function UserManagement() {
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-gray-900">Tambah User Baru</h3>
-              <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-gray-50 rounded-lg"><X className="w-5 h-5" /></button>
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+              <h3 className="text-lg font-bold text-gray-900">{editingUser ? 'Edit User' : 'Tambah User Baru'}</h3>
+              <button onClick={() => { setIsModalOpen(false); setEditingUser(null); }} className="p-2 hover:bg-gray-50 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase ml-1">Nama Lengkap</label>
                 <input 
@@ -2504,20 +2745,23 @@ function UserManagement() {
                   type="text" 
                   value={formData.email}
                   onChange={e => setFormData({...formData, email: e.target.value})}
-                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
                   required
+                  disabled={!!editingUser}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase ml-1">Password</label>
-                <input 
-                  type="password" 
-                  value={formData.password}
-                  onChange={e => setFormData({...formData, password: e.target.value})}
-                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  required
-                />
-              </div>
+              {!editingUser && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase ml-1">Password</label>
+                  <input 
+                    type="password" 
+                    value={formData.password}
+                    onChange={e => setFormData({...formData, password: e.target.value})}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    required
+                  />
+                </div>
+              )}
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase ml-1">Role</label>
                 <select 
@@ -2530,7 +2774,7 @@ function UserManagement() {
                   <option value="viewer">Viewer (Hanya Lihat Produk)</option>
                 </select>
               </div>
-              <div className="flex gap-4 pt-4">
+              <div className="flex gap-4 pt-4 flex-shrink-0">
                 <button 
                   type="button"
                   onClick={() => setIsModalOpen(false)}

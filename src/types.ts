@@ -29,6 +29,7 @@ export interface SaleItem {
   productId: string;
   sku: string;
   name: string;
+  description?: string;
   quantity: number;
   price: number;
   total: number;
@@ -52,4 +53,6 @@ export interface UserProfile {
   isMainAdmin?: boolean;
   isPendingAdmin?: boolean;
   isApprovedViewer?: boolean;
+  isPreRegistered?: boolean;
+  lastLogin?: any;
 }
