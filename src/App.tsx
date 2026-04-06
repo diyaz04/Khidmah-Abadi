@@ -10,6 +10,7 @@ import {
   User,
   ChevronRight,
   TrendingUp,
+  TrendingDown,
   AlertTriangle,
   Plus,
   Search,
@@ -142,38 +143,41 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: any) => (
   </button>
 );
 
-const Card = ({ children, className, title, subtitle, action }: any) => (
-  <div className={cn("bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden", className)}>
+const Card = ({ children, className, title, subtitle, action, noPadding = false }: any) => (
+  <div className={cn("bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden transition-all hover:shadow-md", className)}>
     {(title || action) && (
-      <div className="px-6 py-4 border-b border-gray-50 flex items-center justify-between">
+      <div className="px-6 py-5 border-b border-gray-50 flex items-center justify-between">
         <div>
-          {title && <h3 className="text-lg font-semibold text-gray-900">{title}</h3>}
-          {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
+          {title && <h3 className="text-lg font-bold text-gray-900 tracking-tight">{title}</h3>}
+          {subtitle && <p className="text-xs text-gray-400 font-medium">{subtitle}</p>}
         </div>
         {action && <div>{action}</div>}
       </div>
     )}
-    <div className="p-6">{children}</div>
+    <div className={cn(noPadding ? "" : "p-6")}>{children}</div>
   </div>
 );
 
-const StatCard = ({ title, value, icon: Icon, trend, color }: any) => (
-  <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+const StatCard = ({ title, value, icon: Icon, trend, color, className }: any) => (
+  <div className={cn("bg-white p-5 lg:p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full transition-all hover:shadow-md", className)}>
     <div className="flex items-center justify-between mb-4">
-      <div className={cn("p-2 rounded-lg", color)}>
-        <Icon className="w-6 h-6 text-white" />
+      <div className={cn("p-3 rounded-2xl", color)}>
+        <Icon className="w-5 h-5 lg:w-6 lg:h-6 text-white" />
       </div>
       {trend && (
-        <span className={cn(
-          "text-xs font-medium px-2 py-1 rounded-full",
+        <div className={cn(
+          "flex items-center gap-1 px-2 py-1 rounded-xl text-[10px] font-bold",
           trend > 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"
         )}>
+          {trend > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
           {trend > 0 ? "+" : ""}{trend}%
-        </span>
+        </div>
       )}
     </div>
-    <h4 className="text-sm font-medium text-gray-500">{title}</h4>
-    <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+    <div>
+      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{title}</h4>
+      <p className="text-xl lg:text-2xl font-black text-gray-900">{value}</p>
+    </div>
   </div>
 );
 
@@ -1031,7 +1035,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row">
       <Toaster position="top-right" />
       
       {/* Mobile Sidebar Overlay */}
@@ -1042,10 +1046,10 @@ export default function App() {
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar - Hidden on mobile, shown on desktop */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-100 z-50 transition-transform lg:translate-x-0 lg:static lg:block",
-        isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        "fixed inset-y-0 left-0 w-64 bg-white border-r border-gray-100 z-50 transition-transform lg:translate-x-0 lg:static lg:block hidden",
+        isSidebarOpen ? "translate-x-0 !block" : "-translate-x-full"
       )}>
         <div className="h-full flex flex-col">
           <div className="p-6 flex items-center gap-3">
@@ -1149,15 +1153,17 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden pb-20 lg:pb-0">
         {/* Topbar */}
         <header className="h-16 bg-white border-b border-gray-100 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-30">
-          <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="p-2 text-gray-600 hover:bg-gray-50 rounded-lg lg:hidden"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-3 lg:hidden">
+            <img 
+              src="https://lh3.googleusercontent.com/d/1THnm0UU2JX2F1yi8dcFCgOck0-6yG9Px" 
+              alt="Logo" 
+              className="w-8 h-8 object-contain"
+            />
+            <span className="font-bold text-gray-900">Khidmah Abadi</span>
+          </div>
           
           <div className="flex-1 px-4 max-w-xl hidden md:block">
             <div className="relative">
@@ -1174,26 +1180,82 @@ export default function App() {
             <div className="text-right hidden sm:block">
               <p className="text-xs text-gray-500">{new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
             </div>
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 text-gray-600 hover:bg-gray-50 rounded-lg lg:hidden"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
           </div>
         </header>
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
-          {activeTab === 'dashboard' && userProfile?.role === 'admin' && <Dashboard products={products} sales={sales} />}
+          {activeTab === 'dashboard' && userProfile?.role === 'admin' && <Dashboard products={products} sales={sales} userProfile={userProfile} />}
           {activeTab === 'products' && userProfile?.role !== 'viewer' && <ProductManagement products={products} userRole={userProfile?.role} />}
           {activeTab === 'catalog' && <Catalog products={products} userProfile={userProfile} />}
           {activeTab === 'procurement' && userProfile?.role === 'admin' && <ProcurementManagement products={products} procurements={procurements} />}
           {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} userRole={userProfile?.role} />}
           {activeTab === 'users' && userProfile?.isMainAdmin && <UserManagement />}
         </div>
+
+        {/* Bottom Navigation for Mobile */}
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-3 flex items-center justify-between z-40 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
+          <BottomNavItem 
+            icon={LayoutDashboard} 
+            active={activeTab === 'dashboard'} 
+            onClick={() => setActiveTab('dashboard')} 
+            show={userProfile?.role === 'admin'}
+          />
+          <BottomNavItem 
+            icon={Package} 
+            active={activeTab === 'products'} 
+            onClick={() => setActiveTab('products')} 
+            show={userProfile?.role === 'admin' || userProfile?.role === 'staff'}
+          />
+          <BottomNavItem 
+            icon={Grid} 
+            active={activeTab === 'catalog'} 
+            onClick={() => setActiveTab('catalog')} 
+            show={true}
+          />
+          <BottomNavItem 
+            icon={ShoppingCart} 
+            active={activeTab === 'sales'} 
+            onClick={() => setActiveTab('sales')} 
+            show={userProfile?.role === 'admin' || userProfile?.role === 'staff'}
+          />
+          <BottomNavItem 
+            icon={User} 
+            active={activeTab === 'users'} 
+            onClick={() => setActiveTab('users')} 
+            show={userProfile?.isMainAdmin}
+          />
+        </nav>
       </main>
     </div>
   );
 }
 
+function BottomNavItem({ icon: Icon, active, onClick, show }: { icon: any, active: boolean, onClick: () => void, show?: boolean }) {
+  if (!show) return null;
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "p-2 rounded-2xl transition-all duration-300 flex flex-col items-center gap-1",
+        active ? "text-blue-600 bg-blue-50" : "text-gray-400 hover:text-gray-600"
+      )}
+    >
+      <Icon className={cn("w-6 h-6", active && "animate-in zoom-in duration-300")} />
+      {active && <div className="w-1 h-1 bg-blue-600 rounded-full" />}
+    </button>
+  );
+}
+
 // --- Sub-Components ---
 
-function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) {
+function Dashboard({ products, sales, userProfile }: { products: Product[], sales: Sale[], userProfile: UserProfile | null }) {
   const totalSales = sales.reduce((acc, sale) => acc + sale.totalAmount, 0);
   const lowStockProducts = products.filter(p => p.stock <= 10);
   
@@ -1217,23 +1279,42 @@ function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16', '#6366F1'];
 
   return (
-    <div className="space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div className="space-y-6 lg:space-y-8">
+      {/* Welcome Section */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Halo, {userProfile?.displayName}! 👋</h2>
+          <p className="text-gray-500 text-sm font-medium">Berikut ringkasan bisnis Anda hari ini.</p>
+        </div>
+        <div className="flex items-center gap-3 bg-blue-50/50 p-3 rounded-2xl border border-blue-100">
+          <div className="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-200">
+            <TrendingUp className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <p className="text-[10px] text-blue-600 font-black uppercase tracking-widest">Performa</p>
+            <p className="text-base font-black text-gray-900">+12.5% <span className="text-[10px] font-bold text-gray-400">vs bln lalu</span></p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Bento Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
         <StatCard 
           title="Total Penjualan" 
           value={formatCurrency(totalSales)} 
           icon={TrendingUp} 
           color="bg-blue-600"
           trend={12}
+          className="col-span-2 lg:col-span-1"
         />
         <StatCard 
-          title="Total Produk" 
+          title="Produk" 
           value={products.length} 
           icon={Package} 
           color="bg-emerald-600"
         />
         <StatCard 
-          title="Stok Menipis" 
+          title="Stok Tipis" 
           value={lowStockProducts.length} 
           icon={AlertTriangle} 
           color="bg-amber-500"
@@ -1243,29 +1324,33 @@ function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) 
           value={sales.length} 
           icon={ShoppingCart} 
           color="bg-indigo-600"
+          className="hidden lg:flex"
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <Card className="lg:col-span-2" title="Tren Penjualan (7 Hari Terakhir)">
-          <div className="h-80 w-full">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+        <Card className="lg:col-span-2 !p-0 overflow-hidden" title="Tren Penjualan" noPadding>
+          <div className="p-6 pb-0">
+            <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-4">7 Hari Terakhir</p>
+          </div>
+          <div className="h-64 lg:h-80 w-full px-2">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
-                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9CA3AF' }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9CA3AF' }} tickFormatter={(val) => `Rp${val/1000}k`} />
+                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} tickFormatter={(val) => `Rp${val/1000}k`} />
                 <Tooltip 
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)' }}
                   formatter={(val: number) => [formatCurrency(val), 'Penjualan']}
                 />
-                <Bar dataKey="amount" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="amount" fill="#3B82F6" radius={[8, 8, 0, 0]} barSize={32} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
-        <Card title="Kategori Produk">
-          <div className="h-80 w-full flex flex-col items-center justify-center">
+        <Card title="Kategori" className="flex flex-col">
+          <div className="h-64 lg:h-80 w-full flex flex-col items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -1273,22 +1358,22 @@ function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) 
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
+                  outerRadius={85}
+                  paddingAngle={8}
                   dataKey="value"
                 >
                   {categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
                   ))}
                 </Pie>
                 <Tooltip />
               </PieChart>
             </ResponsiveContainer>
-            <div className="flex gap-4 mt-4">
-              {categoryData.map((cat, i) => (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 w-full">
+              {categoryData.slice(0, 4).map((cat, i) => (
                 <div key={cat.name} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i] }} />
-                  <span className="text-xs text-gray-600">{cat.name} ({cat.value})</span>
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[i] }} />
+                  <span className="text-[10px] text-gray-500 font-bold truncate">{cat.name}</span>
                 </div>
               ))}
             </div>
@@ -1296,26 +1381,26 @@ function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) 
         </Card>
       </div>
 
-      <Card title="Produk Stok Menipis" subtitle="Segera lakukan pengadaan barang">
+      <Card title="Stok Menipis" subtitle="Segera lakukan pengadaan barang" className="overflow-hidden" noPadding>
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full text-left min-w-[500px]">
             <thead>
-              <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-50">
-                <th className="px-4 py-3">Produk</th>
-                <th className="px-4 py-3">Kategori</th>
-                <th className="px-4 py-3">Stok</th>
-                <th className="px-4 py-3">Status</th>
+              <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50">
+                <th className="px-6 py-5">Produk</th>
+                <th className="px-6 py-5">Kategori</th>
+                <th className="px-6 py-5">Stok</th>
+                <th className="px-6 py-5">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {lowStockProducts.map(product => (
-                <tr key={product.id} className="text-sm hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-4 font-medium text-gray-900">{product.name}</td>
-                  <td className="px-4 py-4 text-gray-600">{product.category}</td>
-                  <td className="px-4 py-4 text-gray-600">{product.stock} {product.unit}</td>
-                  <td className="px-4 py-4">
+                <tr key={product.id} className="text-sm hover:bg-gray-50/50 transition-colors group">
+                  <td className="px-6 py-5 font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{product.name}</td>
+                  <td className="px-6 py-5 text-gray-500 font-medium">{product.category}</td>
+                  <td className="px-6 py-5 text-gray-500 font-mono font-bold">{product.stock} {product.unit}</td>
+                  <td className="px-6 py-5">
                     <span className={cn(
-                      "px-2 py-1 rounded-full text-xs font-medium",
+                      "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest",
                       product.stock === 0 ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"
                     )}>
                       {product.stock === 0 ? "Habis" : "Menipis"}
@@ -1325,7 +1410,7 @@ function Dashboard({ products, sales }: { products: Product[], sales: Sale[] }) 
               ))}
               {lowStockProducts.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Semua stok aman.</td>
+                  <td colSpan={4} className="px-6 py-16 text-center text-gray-400 font-medium italic">Semua stok aman.</td>
                 </tr>
               )}
             </tbody>
