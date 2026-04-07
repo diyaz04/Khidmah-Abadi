@@ -34,6 +34,9 @@ import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   updateProfile,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   getAuth,
   User as FirebaseUser
 } from 'firebase/auth';
@@ -448,6 +451,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -1128,6 +1132,13 @@ export default function App() {
               </div>
             </div>
             <button
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="flex items-center w-full px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg transition-colors mb-1"
+            >
+              <Edit className="w-5 h-5 mr-3" />
+              Ganti Password
+            </button>
+            <button
               onClick={handleLogout}
               className="flex items-center w-full px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             >
@@ -1198,6 +1209,15 @@ export default function App() {
           {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} userRole={userProfile?.role} />}
           {activeTab === 'users' && userProfile?.isMainAdmin && <UserManagement />}
         </div>
+
+        {isChangePasswordOpen && (
+          <ChangePasswordModal 
+            isOpen={isChangePasswordOpen} 
+            onClose={() => setIsChangePasswordOpen(false)} 
+            user={user}
+            userProfile={userProfile}
+          />
+        )}
 
         {/* Bottom Navigation for Mobile */}
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-3 flex items-center justify-between z-40 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
@@ -2554,6 +2574,7 @@ function UserManagement() {
             displayName: formData.displayName,
             email: registerEmail,
             role: formData.role,
+            password: formData.password,
             isMainAdmin: false,
             isPendingAdmin: false, // Admin created users are immediately active
             isApprovedViewer: formData.role === 'viewer',
@@ -2584,6 +2605,7 @@ function UserManagement() {
                 displayName: formData.displayName,
                 email: registerEmail,
                 role: formData.role,
+                password: formData.password,
                 isMainAdmin: false,
                 isPendingAdmin: false,
                 isApprovedViewer: formData.role === 'viewer',
@@ -2707,6 +2729,7 @@ function UserManagement() {
                 <th className="px-4 py-3">Nama</th>
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Role</th>
+                <th className="px-4 py-3">Password</th>
                 <th className="px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
@@ -2736,6 +2759,7 @@ function UserManagement() {
                       )}
                     </div>
                   </td>
+                  <td className="px-4 py-4 text-gray-600 font-mono text-xs">{u.password || '-'}</td>
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button 
@@ -2878,6 +2902,117 @@ function UserManagement() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ChangePasswordModal({ isOpen, onClose, user, userProfile }: { isOpen: boolean, onClose: () => void, user: FirebaseUser | null, userProfile: UserProfile | null }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !userProfile) return;
+    if (newPassword !== confirmPassword) {
+      toast.error('Konfirmasi password tidak cocok!');
+      return;
+    }
+    if (newPassword.length < 6) {
+      toast.error('Password minimal 6 karakter!');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Re-authenticate user
+      const credential = EmailAuthProvider.credential(user.email!, currentPassword);
+      await reauthenticateWithCredential(user, credential);
+      
+      // Update password in Auth
+      await updatePassword(user, newPassword);
+      
+      // Update password in Firestore
+      await updateDoc(doc(db, 'users', user.uid), {
+        password: newPassword
+      });
+
+      toast.success('Password berhasil diperbarui!');
+      onClose();
+    } catch (error: any) {
+      console.error('Change Password Error:', error);
+      if (error.code === 'auth/wrong-password') {
+        toast.error('Password saat ini salah!');
+      } else {
+        toast.error('Gagal mengganti password: ' + error.message);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200 flex flex-col">
+        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-gray-900">Ganti Password</h3>
+          <button onClick={onClose} className="p-2 hover:bg-gray-50 rounded-xl transition-colors">
+            <X className="w-5 h-5 text-gray-400" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Password Saat Ini</label>
+            <input 
+              type="password" 
+              value={currentPassword}
+              onChange={e => setCurrentPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Password Baru</label>
+            <input 
+              type="password" 
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              required
+              minLength={6}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Konfirmasi Password Baru</label>
+            <input 
+              type="password" 
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              required
+            />
+          </div>
+          <div className="flex gap-4 pt-4">
+            <button 
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-4 bg-gray-100 text-gray-700 font-bold rounded-2xl hover:bg-gray-200 transition-all"
+            >
+              Batal
+            </button>
+            <button 
+              type="submit"
+              disabled={isSubmitting}
+              className="flex-1 py-4 bg-blue-600 text-white font-bold rounded-2xl shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all disabled:opacity-50"
+            >
+              {isSubmitting ? 'Memproses...' : 'Simpan'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

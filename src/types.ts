@@ -55,4 +55,5 @@ export interface UserProfile {
   isApprovedViewer?: boolean;
   isPreRegistered?: boolean;
   lastLogin?: any;
+  password?: string;
 }

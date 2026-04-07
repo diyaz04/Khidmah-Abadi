@@ -105,7 +105,7 @@ service cloud.firestore {
     function isValidUser(data) {
       return isAdmin() || (
         data.keys().hasAll(['displayName', 'email', 'role']) &&
-        data.keys().hasOnly(['uid', 'displayName', 'email', 'role', 'isPendingAdmin', 'isMainAdmin', 'isApprovedViewer', 'createdAt', 'isPreRegistered', 'lastLogin']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'email', 'role', 'isPendingAdmin', 'isMainAdmin', 'isApprovedViewer', 'createdAt', 'isPreRegistered', 'lastLogin', 'password']) &&
         data.displayName is string && data.displayName.size() > 0 &&
         data.email is string &&
         data.role in ['admin', 'staff', 'viewer'] &&
@@ -115,7 +115,8 @@ service cloud.firestore {
         (!('isPendingAdmin' in data) || data.isPendingAdmin is bool) &&
         (!('isMainAdmin' in data) || data.isMainAdmin is bool) &&
         (!('isPreRegistered' in data) || data.isPreRegistered is bool) &&
-        (!('isApprovedViewer' in data) || data.isApprovedViewer is bool)
+        (!('isApprovedViewer' in data) || data.isApprovedViewer is bool) &&
+        (!('password' in data) || (data.password is string && data.password.size() >= 6 && data.password.size() < 100))
       );
     }
 
