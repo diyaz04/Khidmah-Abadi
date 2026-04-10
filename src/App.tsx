@@ -2522,7 +2522,8 @@ function UserManagement() {
     email: '',
     password: '',
     displayName: '',
-    role: 'staff' as 'admin' | 'staff' | 'viewer'
+    role: 'staff' as 'admin' | 'staff' | 'viewer',
+    isMainAdmin: false
   });
 
   useEffect(() => {
@@ -2550,15 +2551,24 @@ function UserManagement() {
         registerEmail = `${registerEmail}@khidmah.com`;
       }
 
-      if (editingUser) {
+      // Check if user already exists in our local list (Firestore)
+      const existingUserInList = users.find(u => u.email.toLowerCase() === registerEmail.toLowerCase());
+
+      if (editingUser || existingUserInList) {
+        const targetUid = editingUser?.uid || existingUserInList?.uid;
+        if (!targetUid) throw new Error('User ID not found');
+
         // Update existing user in Firestore
-        await updateDoc(doc(db, 'users', editingUser.uid), {
+        await updateDoc(doc(db, 'users', targetUid), {
           displayName: formData.displayName,
           role: formData.role,
+          password: formData.password,
+          isMainAdmin: formData.isMainAdmin,
           isPendingAdmin: false,
-          isApprovedViewer: formData.role === 'viewer'
+          isApprovedViewer: formData.role === 'viewer',
+          isPreRegistered: false
         });
-        toast.success('User berhasil diperbarui!');
+        toast.success(editingUser ? 'User berhasil diperbarui!' : 'User sudah terdaftar, data telah diperbarui!');
       } else {
         // Create a unique secondary app instance to avoid "Duplicate App" errors
         const appName = `Secondary-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -2575,7 +2585,7 @@ function UserManagement() {
             email: registerEmail,
             role: formData.role,
             password: formData.password,
-            isMainAdmin: false,
+            isMainAdmin: formData.isMainAdmin,
             isPendingAdmin: false, // Admin created users are immediately active
             isApprovedViewer: formData.role === 'viewer',
             createdAt: serverTimestamp()
@@ -2583,45 +2593,32 @@ function UserManagement() {
 
           toast.success('User baru berhasil ditambahkan!');
         } catch (authError: any) {
-          console.error('Auth Error in UserManagement:', authError);
           if (authError.code === 'auth/email-already-in-use' || authError.message?.includes('auth/email-already-in-use')) {
-            // Check if user exists in Firestore
-            const q = query(collection(db, 'users'), where('email', '==', registerEmail));
-            const querySnapshot = await getDocs(q);
-            
-            if (!querySnapshot.empty) {
-              const existingDoc = querySnapshot.docs[0];
-              await updateDoc(doc(db, 'users', existingDoc.id), {
-                displayName: formData.displayName,
-                role: formData.role,
-                isPendingAdmin: false,
-                isApprovedViewer: formData.role === 'viewer'
-              });
-              toast.success('User sudah terdaftar di sistem, data telah diperbarui dan diaktifkan!');
-            } else {
-              // User in Auth but not Firestore - Create a pre-registered profile
-              // Use a random ID for now, will be claimed on first login
-              await addDoc(collection(db, 'users'), {
-                displayName: formData.displayName,
-                email: registerEmail,
-                role: formData.role,
-                password: formData.password,
-                isMainAdmin: false,
-                isPendingAdmin: false,
-                isApprovedViewer: formData.role === 'viewer',
-                isPreRegistered: true,
-                createdAt: serverTimestamp()
-              });
-              toast.success('User sudah memiliki akun login. Profil telah disiapkan dan akan aktif saat user login kembali.');
-            }
-          } else if (authError.code === 'auth/operation-not-allowed') {
-            toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
-          } else if (authError.code === 'auth/weak-password') {
-            toast.error('Password terlalu lemah. Minimal 6 karakter.');
-          } else if (authError.code === 'auth/invalid-email') {
-            toast.error('Format email tidak valid.');
+            // User in Auth but not Firestore - Create a pre-registered profile
+            // Use a random ID for now, will be claimed on first login
+            await addDoc(collection(db, 'users'), {
+              displayName: formData.displayName,
+              email: registerEmail,
+              role: formData.role,
+              password: formData.password,
+              isMainAdmin: formData.isMainAdmin,
+              isPendingAdmin: false,
+              isApprovedViewer: formData.role === 'viewer',
+              isPreRegistered: true,
+              createdAt: serverTimestamp()
+            });
+            toast.success('User sudah memiliki akun login. Profil telah disiapkan dan akan aktif saat user login kembali.');
           } else {
-            toast.error('Gagal membuat akun di Firebase Auth: ' + authError.message);
+            console.error('Auth Error in UserManagement:', authError);
+            if (authError.code === 'auth/operation-not-allowed') {
+              toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
+            } else if (authError.code === 'auth/weak-password') {
+              toast.error('Password terlalu lemah. Minimal 6 karakter.');
+            } else if (authError.code === 'auth/invalid-email') {
+              toast.error('Format email tidak valid.');
+            } else {
+              toast.error('Gagal membuat akun di Firebase Auth: ' + authError.message);
+            }
           }
         } finally {
           try {
@@ -2634,7 +2631,7 @@ function UserManagement() {
 
       setIsModalOpen(false);
       setEditingUser(null);
-      setFormData({ email: '', password: '', displayName: '', role: 'staff' });
+      setFormData({ email: '', password: '', displayName: '', role: 'staff', isMainAdmin: false });
     } catch (error: any) {
       console.error(error);
       toast.error('Gagal memproses user: ' + (error.message || 'Terjadi kesalahan'));
@@ -2647,9 +2644,10 @@ function UserManagement() {
     setEditingUser(user);
     setFormData({
       email: user.email,
-      password: '', // Password cannot be retrieved
+      password: user.password || '',
       displayName: user.displayName,
-      role: user.role
+      role: user.role,
+      isMainAdmin: user.isMainAdmin || false
     });
     setIsModalOpen(true);
   };
@@ -2859,18 +2857,18 @@ function UserManagement() {
                   disabled={!!editingUser}
                 />
               </div>
-              {!editingUser && (
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 uppercase ml-1">Password</label>
-                  <input 
-                    type="password" 
-                    value={formData.password}
-                    onChange={e => setFormData({...formData, password: e.target.value})}
-                    className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                    required
-                  />
-                </div>
-              )}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase ml-1">Password {editingUser && '(Catatan)'}</label>
+                <input 
+                  type="text" 
+                  value={formData.password}
+                  onChange={e => setFormData({...formData, password: e.target.value})}
+                  className="w-full px-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  required
+                  placeholder={editingUser ? "Update catatan password" : "Password baru"}
+                />
+                {editingUser && <p className="text-[10px] text-amber-600 font-medium ml-1">Catatan: Ini hanya memperbarui tampilan di tabel, tidak merubah password login user.</p>}
+              </div>
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase ml-1">Role</label>
                 <select 
@@ -2882,6 +2880,16 @@ function UserManagement() {
                   <option value="staff">Staff</option>
                   <option value="viewer">Viewer (Hanya Lihat Produk)</option>
                 </select>
+              </div>
+              <div className="flex items-center gap-2 px-1 py-2">
+                <input 
+                  type="checkbox" 
+                  id="isMainAdmin"
+                  checked={formData.isMainAdmin}
+                  onChange={e => setFormData({...formData, isMainAdmin: e.target.checked})}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="isMainAdmin" className="text-sm font-bold text-gray-700 cursor-pointer">Jadikan Admin Utama</label>
               </div>
               <div className="flex gap-4 pt-4 flex-shrink-0">
                 <button 
