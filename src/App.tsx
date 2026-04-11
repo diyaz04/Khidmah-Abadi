@@ -1065,7 +1065,7 @@ export default function App() {
                 crossOrigin="anonymous"
               />
             </div>
-            <span className="text-xl font-bold text-gray-900">CV. Khidmah Abadi</span>
+            <span className="text-xl font-bold text-gray-900">CV Khidmah Abadi</span>
           </div>
 
           <nav className="flex-1 px-4 space-y-1">
