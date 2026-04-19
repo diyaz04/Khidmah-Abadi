@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -480,62 +480,7 @@ export default function App() {
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
-      if (firebaseUser) {
-        // Use onSnapshot to listen for profile changes (like approval) in real-time
-        console.log("Starting profile snapshot for UID:", firebaseUser.uid);
-        const unsubProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), async (docSnap) => {
-          console.log("Profile snapshot received for UID:", firebaseUser.uid, "Exists:", docSnap.exists());
-          if (docSnap.exists()) {
-            const profile = docSnap.data() as UserProfile;
-            setUserProfile(profile);
-            if (profile.role === 'admin' && !firebaseUser.emailVerified) {
-              // Optional: toast warning
-            }
-            if (profile.role === 'viewer') {
-              setActiveTab('catalog');
-            }
-          } else {
-            // Profile doesn't exist yet - Check for pre-registered profile by email
-            try {
-              const q = query(collection(db, 'users'), where('email', '==', firebaseUser.email), where('isPreRegistered', '==', true));
-              const querySnapshot = await getDocs(q);
-              
-              if (!querySnapshot.empty) {
-                const preRegDoc = querySnapshot.docs[0];
-                const preRegData = preRegDoc.data();
-                
-                // Claim the profile: Copy to users/{uid} and delete old doc
-                await setDoc(doc(db, 'users', firebaseUser.uid), {
-                  ...preRegData,
-                  uid: firebaseUser.uid,
-                  isPreRegistered: false, // No longer pre-registered
-                  lastLogin: serverTimestamp()
-                });
-                
-                await deleteDoc(doc(db, 'users', preRegDoc.id));
-                console.log("Profile claimed successfully for UID:", firebaseUser.uid);
-                // The snapshot will fire again for the new doc
-              } else {
-                setUserProfile(null);
-              }
-            } catch (claimError) {
-              console.error("Error claiming profile:", claimError);
-              setUserProfile(null);
-            }
-          }
-          setLoading(false);
-        }, (error) => {
-          console.error("Profile Snapshot Error for UID:", firebaseUser.uid, error);
-          try {
-            handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
-          } catch (err) {
-            // Error already logged
-          }
-          setLoading(false);
-        });
-
-        return () => unsubProfile();
-      } else {
+      if (!firebaseUser) {
         setUserProfile(null);
         setLoading(false);
       }
@@ -544,8 +489,103 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  const [isClaiming, setIsClaiming] = useState(false);
+  const updatingProfileRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!userProfile || userProfile.isPendingAdmin === true) return;
+    if (!user) {
+      setUserProfile(null);
+      setIsClaiming(false);
+      return;
+    }
+
+    if (updatingProfileRef.current === user.uid) return;
+
+    console.log("Starting profile snapshot for UID:", user.uid);
+    const unsubProfile = onSnapshot(doc(db, 'users', user.uid), async (docSnap) => {
+      // Don't process if we are currently updating/claiming for this user
+      if (updatingProfileRef.current === user.uid) return;
+
+      console.log("Profile snapshot update for UID:", user.uid, "Exists:", docSnap.exists());
+      if (docSnap.exists()) {
+        const profile = docSnap.data() as UserProfile;
+        
+        // If profile is pre-registered but UID matches, finalize it
+        if (profile.isPreRegistered) {
+          console.log("Finalizing pre-registered profile for matched UID:", user.uid);
+          updatingProfileRef.current = user.uid;
+          setIsClaiming(true);
+          try {
+            await updateDoc(doc(db, 'users', user.uid), {
+              isPreRegistered: false,
+              lastLogin: serverTimestamp()
+            });
+          } catch (e) {
+            console.error("Error finalizing profile:", e);
+          } finally {
+            updatingProfileRef.current = null;
+            setIsClaiming(false);
+          }
+          return;
+        }
+        
+        setUserProfile(profile);
+        console.log("Profile data loaded:", profile.role, profile.displayName);
+      } else {
+        console.log("No profile found for UID:", user.uid, "Checking for pre-registration...");
+        // Profile doesn't exist yet - Check for pre-registered profile by email
+        updatingProfileRef.current = user.uid;
+        setIsClaiming(true);
+        try {
+          const q = query(collection(db, 'users'), where('email', '==', user.email), where('isPreRegistered', '==', true));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            const preRegDoc = querySnapshot.docs[0];
+            const preRegData = preRegDoc.data();
+            console.log("Found pre-registered profile to claim:", preRegData.role);
+            
+            // Claim the profile: Copy to users/{uid} and delete old doc
+            await setDoc(doc(db, 'users', user.uid), {
+              ...preRegData,
+              uid: user.uid,
+              isPreRegistered: false, // No longer pre-registered
+              lastLogin: serverTimestamp()
+            });
+            
+            await deleteDoc(doc(db, 'users', preRegDoc.id));
+            console.log("Profile claimed successfully for UID:", user.uid);
+          } else {
+            console.log("No pre-registration found for email:", user.email);
+            setUserProfile(null);
+          }
+        } catch (claimError: any) {
+          console.error("Error claiming profile for email:", user.email, "Error:", claimError.message);
+          setUserProfile(null);
+        } finally {
+          updatingProfileRef.current = null;
+          setIsClaiming(false);
+        }
+      }
+      setLoading(false);
+    }, (error) => {
+      if (updatingProfileRef.current === user.uid) return;
+      console.error("Profile Snapshot Error for UID:", user.uid, "Code:", (error as any).code, "Message:", error.message);
+      try {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      } catch (err) {
+        // Error already logged
+      }
+      setLoading(false);
+    });
+
+    return () => unsubProfile();
+  }, [user]);
+
+  useEffect(() => {
+    // Prevent data fetching if not fully approved or if no profile
+    // Only Main Admin or non-pending users can see full data
+    if (!userProfile || (userProfile.isPendingAdmin && !userProfile.isMainAdmin)) return;
 
     const unsubProducts = onSnapshot(query(collection(db, 'products'), orderBy('name')), (snapshot) => {
       setProducts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Product)));
@@ -623,10 +663,14 @@ export default function App() {
         toast.success('Berhasil masuk!');
       } catch (loginError: any) {
         // Jika username adalah 'admin' dan password 'admin123' tapi belum terdaftar
+        const isAuthPlatformError = loginError.code === 'auth/invalid-credential' || loginError.message?.includes('auth/invalid-credential');
+        const isUserNotFoundError = loginError.code === 'auth/user-not-found';
+        const isAdminUser = email.toLowerCase() === 'admin' || email.toLowerCase() === 'admin@khidmah.com';
+
         if (
-          email.toLowerCase() === 'admin' && 
+          isAdminUser && 
           password === 'admin123' && 
-          (loginError.code === 'auth/user-not-found' || loginError.code === 'auth/invalid-credential')
+          (isUserNotFoundError || isAuthPlatformError)
         ) {
           toast.loading('Menyiapkan akun admin utama...', { id: 'setup-admin' });
           try {
@@ -640,15 +684,14 @@ export default function App() {
               email: loginEmail,
               role: 'admin',
               isMainAdmin: true,
-              isPendingAdmin: false
+              isPendingAdmin: false,
+              createdAt: serverTimestamp()
             });
 
-            toast.success('Akun admin utama berhasil disiapkan! Silakan masuk kembali.', { id: 'setup-admin' });
-            // Coba login lagi otomatis
-            await signInWithEmailAndPassword(auth, loginEmail, password);
+            toast.success('Akun admin utama berhasil disiapkan!', { id: 'setup-admin' });
           } catch (regError: any) {
             if (regError.code === 'auth/email-already-in-use' || regError.message?.includes('auth/email-already-in-use')) {
-              toast.error('Akun admin ini sudah terdaftar. Silakan masuk dengan password yang benar.', { id: 'setup-admin' });
+              toast.error('Password admin salah.', { id: 'setup-admin' });
             } else {
               toast.error('Gagal menyiapkan admin: ' + regError.message, { id: 'setup-admin' });
             }
@@ -658,24 +701,25 @@ export default function App() {
         }
       }
     } catch (error: any) {
-      if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
-        // Known error, no need to log to console
-        if (error.code === 'auth/operation-not-allowed') {
-          toast.error('Login Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
-        } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-          toast.error('Email atau password salah.');
-        } else {
-          toast.error('Email atau username ini sudah terdaftar. Silakan masuk.');
-        }
+      const isCredentialError = 
+        error.code === 'auth/invalid-credential' || 
+        error.code === 'auth/wrong-password' || 
+        error.code === 'auth/user-not-found' || 
+        error.message?.includes('auth/invalid-credential');
+
+      // Only log to console if it's NOT a simple credential/password error
+      if (!isCredentialError) {
+        console.error('Login error detail:', error);
+      }
+
+      if (error.code === 'auth/operation-not-allowed') {
+        toast.error('Login Email/Password belum diaktifkan di Firebase Console.');
+      } else if (error.code === 'auth/too-many-requests') {
+        toast.error('Terlalu banyak percobaan masuk. Mohon tunggu beberapa menit atau gunakan Google Login.');
+      } else if (isCredentialError) {
+        toast.error('Email atau password salah.');
       } else {
-        console.error(error);
-        if (error.code === 'auth/operation-not-allowed') {
-          toast.error('Login Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
-        } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-          toast.error('Email atau password salah.');
-        } else {
-          toast.error('Gagal masuk. Silakan coba lagi.');
-        }
+        toast.error('Gagal masuk: ' + (error.message || 'Terjadi kesalahan'));
       }
     } finally {
       setIsAuthLoading(false);
@@ -694,14 +738,14 @@ export default function App() {
       }
       setIsAuthLoading(true);
       try {
-        const isPending = true;
         const newProfile: UserProfile = {
           uid: user.uid,
           displayName: displayName || user.displayName || 'User',
           email: user.email || '',
           role: registerRole,
-          isPendingAdmin: isPending,
-          isMainAdmin: false
+          isPendingAdmin: true, // Always true for self-reg
+          isMainAdmin: false,
+          isApprovedViewer: false // Blocked until approval
         };
         
         // Check if this is a bootstrap admin email
@@ -743,21 +787,21 @@ export default function App() {
       
       await updateProfile(newUser, { displayName });
 
-      const isPending = true; // All roles now require approval
       const newProfile: UserProfile = {
         uid: newUser.uid,
         displayName: displayName || 'User',
         email: registerEmail,
         role: selectedRole, // Use the captured role
-        isPendingAdmin: isPending,
-        isMainAdmin: false
+        isPendingAdmin: true, // Always true for self-reg
+        isMainAdmin: false,
+        isApprovedViewer: false // Blocked until approval
       };
       
       await setDoc(doc(db, 'users', newUser.uid), newProfile);
       setUserProfile(newProfile);
 
       const roleName = selectedRole === 'admin' ? 'admin' : selectedRole === 'viewer' ? 'viewer' : 'staff';
-      toast.success(`Anda berhasil mendaftar sebagai ${roleName}, silahkan tunggu konfirmasi dari admin utama`, { duration: 5000 });
+      toast.success(`Anda berhasil mendaftar sebagai ${roleName}, silakan tunggu persetujuan admin utama.`);
       // Stay logged in, UI will show pending message
     } catch (error: any) {
       if (error.code === 'auth/email-already-in-use' || error.message?.includes('auth/email-already-in-use')) {
@@ -805,14 +849,16 @@ export default function App() {
     }
   };
 
-  if (loading) {
+  if (loading || isClaiming) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 flex-col gap-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <p className="text-gray-500 font-medium">{isClaiming ? 'Menyingkronkan Profil...' : 'Memuat Sesi...'}</p>
       </div>
     );
   }
 
+  // If not logged in, show login/register screen
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -925,6 +971,7 @@ export default function App() {
     );
   }
 
+  // If logged in but no profile exists, show profile completion screen
   if (!userProfile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
@@ -992,12 +1039,12 @@ export default function App() {
              <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center border border-gray-100 overflow-hidden">
                <img 
                  src="https://lh3.googleusercontent.com/d/1THnm0UU2JX2F1yi8dcFCgOck0-6yG9Px" 
-                 alt="CV. Khidmah Abadi Logo" 
+                 alt="CV Khidmah Abadi Logo" 
                  className="w-8 h-8 object-contain"
                  crossOrigin="anonymous"
                />
              </div>
-             <h1 className="text-xl font-bold text-gray-900">CV. Khidmah Abadi</h1>
+             <h1 className="text-xl font-bold text-gray-900">CV Khidmah Abadi</h1>
            </div>
            <div className="flex items-center gap-4">
              <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 text-amber-700 rounded-full text-xs font-medium border border-amber-100">
@@ -1015,11 +1062,10 @@ export default function App() {
             <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
               <AlertTriangle className="w-8 h-8 text-amber-600" />
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Akses Tertunda</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Akses Tertunda</h2>
+            <p className="text-amber-600 font-semibold mb-4">Menunggu Persetujuan Admin Utama</p>
             <p className="text-gray-600 mb-6">
-              {isViewerPending 
-                ? 'Sedang menunggu konfirmasi dari admin utama untuk melihat katalog produk.' 
-                : 'Sedang menunggu persetujuan admin utama untuk memberikan akses kepada anda. Saat ini Anda hanya dapat melihat fitur dasar sebagai Staff.'}
+              Akun Anda telah berhasil terdaftar. Silakan tunggu admin utama menyetujui akses Anda sebelum Anda dapat menggunakan fitur aplikasi.
             </p>
             <div className="space-y-3">
               <button 
@@ -2565,7 +2611,7 @@ function UserManagement() {
           password: formData.password,
           isMainAdmin: formData.isMainAdmin,
           isPendingAdmin: false,
-          isApprovedViewer: formData.role === 'viewer',
+          isApprovedViewer: true,
           isPreRegistered: false
         });
         toast.success(editingUser ? 'User berhasil diperbarui!' : 'User sudah terdaftar, data telah diperbarui!');
@@ -2587,7 +2633,8 @@ function UserManagement() {
             password: formData.password,
             isMainAdmin: formData.isMainAdmin,
             isPendingAdmin: false, // Admin created users are immediately active
-            isApprovedViewer: formData.role === 'viewer',
+            isApprovedViewer: true,
+            isPreRegistered: true, // Allow claiming/linking by any login method
             createdAt: serverTimestamp()
           });
 
@@ -2603,7 +2650,7 @@ function UserManagement() {
               password: formData.password,
               isMainAdmin: formData.isMainAdmin,
               isPendingAdmin: false,
-              isApprovedViewer: formData.role === 'viewer',
+              isApprovedViewer: true,
               isPreRegistered: true,
               createdAt: serverTimestamp()
             });
@@ -2612,6 +2659,8 @@ function UserManagement() {
             console.error('Auth Error in UserManagement:', authError);
             if (authError.code === 'auth/operation-not-allowed') {
               toast.error('Pendaftaran Email/Password belum diaktifkan di Firebase Console. Silakan aktifkan di menu Authentication > Sign-in method.');
+            } else if (authError.code === 'auth/too-many-requests') {
+              toast.error('Kecepatan pembuatan akun terlalu tinggi. Mohon tunggu sejenak sebelum membuat akun lagi.');
             } else if (authError.code === 'auth/weak-password') {
               toast.error('Password terlalu lemah. Minimal 6 karakter.');
             } else if (authError.code === 'auth/invalid-email') {
