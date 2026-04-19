@@ -275,17 +275,36 @@ function Catalog({ products, userProfile }: { products: Product[], userProfile: 
               className="pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-64"
             />
           </div>
-          <select 
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value as any)}
-            className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-          >
-            <option value="Semua">Semua Kategori</option>
-            {CATEGORIES.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
         </div>
+      </div>
+
+      {/* Category Pills */}
+      <div className="flex flex-wrap gap-2 pb-2">
+        <button
+          onClick={() => setSelectedCategory('Semua')}
+          className={cn(
+            "px-4 py-2 rounded-xl text-xs font-bold transition-all border",
+            selectedCategory === 'Semua' 
+              ? "bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-200" 
+              : "bg-white border-gray-100 text-gray-500 hover:border-blue-200"
+          )}
+        >
+          Semua Produk
+        </button>
+        {CATEGORIES.map(cat => (
+          <button
+            key={cat}
+            onClick={() => setSelectedCategory(cat)}
+            className={cn(
+              "px-4 py-2 rounded-xl text-xs font-bold transition-all border whitespace-nowrap",
+              selectedCategory === cat 
+                ? "bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-200" 
+                : "bg-white border-gray-100 text-gray-500 hover:border-blue-200"
+            )}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -1768,6 +1787,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
 
 function ProcurementManagement({ products, procurements }: { products: Product[], procurements: Procurement[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'name-asc' | 'name-desc'>('date-desc');
   const [formData, setFormData] = useState({
     productId: '',
@@ -1815,6 +1835,17 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
     }
   };
 
+  const handleDeleteProcurement = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'procurements', id));
+      toast.success('Riwayat pengadaan berhasil dihapus.');
+      setIsDeleteConfirmOpen(null);
+    } catch (error) {
+      console.error(error);
+      toast.error('Gagal menghapus riwayat pengadaan.');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1858,6 +1889,7 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
                 <th className="px-4 py-3">Jumlah</th>
                 <th className="px-4 py-3">Harga Beli</th>
                 <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -1870,12 +1902,29 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
                   <td className="px-4 py-4 text-gray-600">{p.quantity}</td>
                   <td className="px-4 py-4 text-gray-600">{formatCurrency(p.buyPrice)}</td>
                   <td className="px-4 py-4 font-semibold text-gray-900">{formatCurrency(p.quantity * p.buyPrice)}</td>
+                  <td className="px-4 py-4 text-right">
+                    <button 
+                      onClick={() => setIsDeleteConfirmOpen(p.id!)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Hapus Riwayat"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <ConfirmDeleteModal 
+        isOpen={!!isDeleteConfirmOpen}
+        onClose={() => setIsDeleteConfirmOpen(null)}
+        onConfirm={() => isDeleteConfirmOpen && handleDeleteProcurement(isDeleteConfirmOpen)}
+        title="Hapus Riwayat Pengadaan?"
+        message="Apakah Anda yakin ingin menghapus catatan pengadaan ini? Perubahan stok produk tidak akan dikembalikan otomatis."
+      />
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
