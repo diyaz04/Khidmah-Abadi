@@ -1515,6 +1515,7 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'sku-asc' | 'sku-desc' | 'date-desc' | 'date-asc'>('name-asc');
+  const [filterCategory, setFilterCategory] = useState<Category | 'Semua'>('Semua');
   const [formData, setFormData] = useState<Partial<Product>>({
     sku: '',
     name: '',
@@ -1529,18 +1530,21 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
   const isAdmin = userRole === 'admin';
   const isViewer = userRole === 'viewer';
 
-  const sortedProducts = [...products].sort((a, b) => {
-    if (sortBy === 'name-asc') return a.name.localeCompare(b.name);
-    if (sortBy === 'name-desc') return b.name.localeCompare(a.name);
-    if (sortBy === 'sku-asc') return a.sku.localeCompare(b.sku);
-    if (sortBy === 'sku-desc') return b.sku.localeCompare(a.sku);
-    if (sortBy === 'date-desc' || sortBy === 'date-asc') {
-      const dateA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-      const dateB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-      return sortBy === 'date-desc' ? dateB - dateA : dateA - dateB;
-    }
-    return 0;
-  });
+  const sortedProducts = useMemo(() => {
+    let result = products.filter(p => filterCategory === 'Semua' || p.category === filterCategory);
+    return result.sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name);
+      if (sortBy === 'name-desc') return b.name.localeCompare(a.name);
+      if (sortBy === 'sku-asc') return a.sku.localeCompare(b.sku);
+      if (sortBy === 'sku-desc') return b.sku.localeCompare(a.sku);
+      if (sortBy === 'date-desc' || sortBy === 'date-asc') {
+        const dateA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const dateB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return sortBy === 'date-desc' ? dateB - dateA : dateA - dateB;
+      }
+      return 0;
+    });
+  }, [products, sortBy, filterCategory]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1583,6 +1587,19 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
           <p className="text-gray-500">Kelola daftar barang dan pangan</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-gray-100 shadow-sm">
+            <label className="text-xs font-bold text-gray-400 uppercase">Kategori:</label>
+            <select 
+              value={filterCategory}
+              onChange={(e: any) => setFilterCategory(e.target.value)}
+              className="text-sm font-medium text-gray-600 outline-none bg-transparent"
+            >
+              <option value="Semua">Semua</option>
+              {CATEGORIES.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
           <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-gray-100 shadow-sm">
             <label className="text-xs font-bold text-gray-400 uppercase">Urutkan:</label>
             <select 
