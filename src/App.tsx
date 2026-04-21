@@ -1549,6 +1549,18 @@ function ProductManagement({ products, userRole }: { products: Product[], userRo
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) return;
+
+    // Check for duplicate SKU
+    const isDuplicateSku = products.some(p => 
+      p.sku.toLowerCase() === formData.sku?.toLowerCase() && 
+      (!editingProduct || p.id !== editingProduct.id)
+    );
+
+    if (isDuplicateSku) {
+      toast.error(`ID Produk (SKU) "${formData.sku}" sudah ada. Silakan ganti ID produknya.`);
+      return;
+    }
+
     try {
       if (editingProduct) {
         await updateDoc(doc(db, 'products', editingProduct.id!), formData);
