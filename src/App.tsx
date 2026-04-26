@@ -8,6 +8,7 @@ import {
   Menu, 
   X,
   User,
+  Users,
   ChevronRight,
   TrendingUp,
   TrendingDown,
@@ -60,7 +61,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, config } from './lib/firebase';
 import { cn, formatCurrency, formatDate } from './lib/utils';
-import { Product, Procurement, Sale, SaleItem, Category, UserProfile } from './types';
+import { Product, Procurement, Sale, SaleItem, Category, UserProfile, Customer } from './types';
 import { 
   BarChart, 
   Bar, 
@@ -482,6 +483,7 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [procurements, setProcurements] = useState<Procurement[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
 
   useEffect(() => {
     // Test connection
@@ -645,10 +647,22 @@ export default function App() {
       });
     }
 
+    const unsubCustomers = onSnapshot(query(collection(db, 'customers'), orderBy('name')), (snapshot) => {
+      setCustomers(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Customer)));
+    }, (error) => {
+      console.error('Customers Snapshot Error:', error);
+      try {
+        handleFirestoreError(error, OperationType.GET, 'customers');
+      } catch (err) {
+        // Error already logged
+      }
+    });
+
     return () => {
       unsubProducts();
       unsubProcurements();
       unsubSales();
+      unsubCustomers();
     };
   }, [userProfile]);
 
@@ -1172,6 +1186,12 @@ export default function App() {
                   active={activeTab === 'sales'} 
                   onClick={() => { setActiveTab('sales'); setIsSidebarOpen(false); }} 
                 />
+                <SidebarItem 
+                  icon={Users} 
+                  label="Pelanggan" 
+                  active={activeTab === 'customers'} 
+                  onClick={() => { setActiveTab('customers'); setIsSidebarOpen(false); }} 
+                />
               </>
             )}
             {userProfile?.isMainAdmin && (
@@ -1271,7 +1291,8 @@ export default function App() {
           {activeTab === 'products' && userProfile?.role !== 'viewer' && <ProductManagement products={products} userRole={userProfile?.role} />}
           {activeTab === 'catalog' && <Catalog products={products} userProfile={userProfile} />}
           {activeTab === 'procurement' && userProfile?.role === 'admin' && <ProcurementManagement products={products} procurements={procurements} />}
-          {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} userRole={userProfile?.role} />}
+          {activeTab === 'sales' && userProfile?.role !== 'viewer' && <SalesManagement products={products} sales={sales} userRole={userProfile?.role} customers={customers} />}
+          {activeTab === 'customers' && userProfile?.role !== 'viewer' && <CustomerManagement customers={customers} />}
           {activeTab === 'users' && userProfile?.isMainAdmin && <UserManagement />}
         </div>
 
@@ -1308,6 +1329,12 @@ export default function App() {
             icon={ShoppingCart} 
             active={activeTab === 'sales'} 
             onClick={() => setActiveTab('sales')} 
+            show={userProfile?.role === 'admin' || userProfile?.role === 'staff'}
+          />
+          <BottomNavItem 
+            icon={Users} 
+            active={activeTab === 'customers'} 
+            onClick={() => setActiveTab('customers')} 
             show={userProfile?.role === 'admin' || userProfile?.role === 'staff'}
           />
           <BottomNavItem 
@@ -2023,13 +2050,15 @@ function ProcurementManagement({ products, procurements }: { products: Product[]
   );
 }
 
-function SalesManagement({ products, sales, userRole }: { products: Product[], sales: Sale[], userRole?: string }) {
+function SalesManagement({ products, sales, userRole, customers = [] }: { products: Product[], sales: Sale[], userRole?: string, customers?: Customer[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'customer-asc' | 'customer-desc'>('date-desc');
   const [cart, setCart] = useState<SaleItem[]>([]);
   const [customer, setCustomer] = useState('');
   const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState(1);
@@ -2154,6 +2183,8 @@ function SalesManagement({ products, sales, userRole }: { products: Product[], s
         totalAmount,
         customer,
         address,
+        phone,
+        customerId: selectedCustomerId || undefined,
         dueDate,
         date: serverTimestamp()
       };
@@ -2173,6 +2204,8 @@ function SalesManagement({ products, sales, userRole }: { products: Product[], s
       setCart([]);
       setCustomer('');
       setAddress('');
+      setPhone('');
+      setSelectedCustomerId('');
       setDueDate('');
     } catch (error) {
       console.error(error);
@@ -2359,8 +2392,36 @@ function SalesManagement({ products, sales, userRole }: { products: Product[], s
             
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Pilih Pelanggan Terdaftar</label>
+                  <select 
+                    value={selectedCustomerId}
+                    onChange={e => {
+                      const id = e.target.value;
+                      setSelectedCustomerId(id);
+                      if (id) {
+                        const cust = customers.find(c => c.id === id);
+                        if (cust) {
+                          setCustomer(cust.name);
+                          setAddress(cust.address);
+                          setPhone(cust.phone);
+                        }
+                      } else {
+                        setCustomer('');
+                        setAddress('');
+                        setPhone('');
+                      }
+                    }}
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="">-- Nama Pelanggan / Input Manual --</option>
+                    {customers.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} - {c.phone}</option>
+                    ))}
+                  </select>
+                </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Pelanggan (Opsional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nama/Instansi</label>
                   <input 
                     type="text" 
                     value={customer}
@@ -2370,7 +2431,17 @@ function SalesManagement({ products, sales, userRole }: { products: Product[], s
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Alamat (Opsional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">No. Telp</label>
+                  <input 
+                    type="text" 
+                    value={phone}
+                    onChange={e => setPhone(e.target.value)}
+                    placeholder="Contoh: 0812..."
+                    className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Alamat</label>
                   <input 
                     type="text" 
                     value={address}
@@ -2522,6 +2593,7 @@ function SalesManagement({ products, sales, userRole }: { products: Product[], s
                 <div>
                   <p className="text-xs font-bold text-gray-400 uppercase mb-1">Ditujukan Kepada:</p>
                   <p className="text-sm font-semibold text-gray-900">{showInvoice.customer || 'Pelanggan Umum'}</p>
+                  {showInvoice.phone && <p className="text-xs text-gray-500 mt-0.5">{showInvoice.phone}</p>}
                 </div>
                 {showInvoice.address && (
                   <div>
@@ -2629,6 +2701,178 @@ function SalesManagement({ products, sales, userRole }: { products: Product[], s
                 Tutup
               </button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CustomerManagement({ customers }: { customers: Customer[] }) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    address: '',
+    phone: ''
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editingCustomer) {
+        await updateDoc(doc(db, 'customers', editingCustomer.id!), {
+          ...formData
+        });
+        toast.success('Pelanggan diperbarui!');
+      } else {
+        await addDoc(collection(db, 'customers'), {
+          ...formData,
+          createdAt: serverTimestamp()
+        });
+        toast.success('Pelanggan ditambahkan!');
+      }
+      setIsModalOpen(false);
+      setEditingCustomer(null);
+      setFormData({ name: '', address: '', phone: '' });
+    } catch (error) {
+      console.error(error);
+      toast.error('Gagal menyimpan pelanggan.');
+    }
+  };
+
+  const handleEdit = (c: Customer) => {
+    setEditingCustomer(c);
+    setFormData({
+      name: c.name,
+      address: c.address,
+      phone: c.phone
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Hapus pelanggan ini?')) return;
+    try {
+      await deleteDoc(doc(db, 'customers', id));
+      toast.success('Pelanggan dihapus.');
+    } catch (error) {
+      toast.error('Gagal menghapus.');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Data Pelanggan</h2>
+          <p className="text-gray-500">Kelola daftar instansi atau pelanggan umum</p>
+        </div>
+        <button 
+          onClick={() => setIsModalOpen(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium flex items-center gap-2 shadow-sm whitespace-nowrap self-start sm:self-center"
+        >
+          <Plus className="w-5 h-5" />
+          Tambah Pelanggan
+        </button>
+      </div>
+
+      <Card title="Daftar Pelanggan">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-50">
+                <th className="px-4 py-3">Nama / Instansi</th>
+                <th className="px-4 py-3">No. Telp</th>
+                <th className="px-4 py-3">Alamat</th>
+                <th className="px-4 py-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {customers.map(c => (
+                <tr key={c.id} className="text-sm hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-4 font-medium text-gray-900">{c.name}</td>
+                  <td className="px-4 py-4 text-gray-600">{c.phone}</td>
+                  <td className="px-4 py-4 text-gray-600">{c.address}</td>
+                  <td className="px-4 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => handleEdit(c)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg">
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(c.id!)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {customers.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-gray-400 italic">Belum ada data pelanggan.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-900">{editingCustomer ? 'Edit Pelanggan' : 'Tambah Pelanggan Baru'}</h3>
+              <button 
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingCustomer(null);
+                  setFormData({ name: '', address: '', phone: '' });
+                }} 
+                className="p-2 hover:bg-gray-50 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nama / Instansi</label>
+                <input 
+                  required
+                  type="text" 
+                  value={formData.name}
+                  onChange={e => setFormData({...formData, name: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Contoh: CV. Khidmah Abadi"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">No. Telepon</label>
+                <input 
+                  required
+                  type="text" 
+                  value={formData.phone}
+                  onChange={e => setFormData({...formData, phone: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Contoh: 08123456789"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Alamat</label>
+                <textarea 
+                  required
+                  rows={3}
+                  value={formData.address}
+                  onChange={e => setFormData({...formData, address: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                  placeholder="Alamat lengkap instansi..."
+                ></textarea>
+              </div>
+              <button 
+                type="submit"
+                className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-md mt-2"
+              >
+                {editingCustomer ? 'Perbarui Data' : 'Simpan Pelanggan'}
+              </button>
+            </form>
           </div>
         </div>
       )}

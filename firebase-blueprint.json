@@ -70,12 +70,25 @@
         "isApprovedViewer": { "type": "boolean" }
       },
       "required": ["displayName", "email", "role"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer information.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Customer/Agency name" },
+        "address": { "type": "string", "description": "Physical address" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "address", "phone"]
     }
   },
   "firestore": {
     "/products/{productId}": { "schema": "Product", "description": "Product collection" },
     "/procurements/{procurementId}": { "schema": "Procurement", "description": "Procurement records" },
     "/sales/{saleId}": { "schema": "Sale", "description": "Sales transactions" },
-    "/users/{userId}": { "schema": "User", "description": "User profiles" }
+    "/users/{userId}": { "schema": "User", "description": "User profiles" },
+    "/customers/{customerId}": { "schema": "Customer", "description": "Customer records" }
   }
 }

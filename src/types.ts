@@ -41,8 +41,18 @@ export interface Sale {
   totalAmount: number;
   date: any; // Firestore Timestamp
   customer?: string;
+  customerId?: string;
   address?: string;
+  phone?: string;
   dueDate?: string; // ISO Date string
+}
+
+export interface Customer {
+  id?: string;
+  name: string;
+  address: string;
+  phone: string;
+  createdAt?: any;
 }
 
 export interface UserProfile {

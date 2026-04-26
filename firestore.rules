@@ -67,6 +67,11 @@ service cloud.firestore {
     match /sales/{saleId} {
       allow read, write: if isStaff();
     }
+
+    // CUSTOMER RULES
+    match /customers/{customerId} {
+      allow read, write: if isStaff();
+    }
     
     // Connection test
     match /test/connection {
