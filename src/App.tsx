@@ -1371,6 +1371,37 @@ function Dashboard({ products, sales, userProfile }: { products: Product[], sale
   const totalSales = sales.reduce((acc, sale) => acc + sale.totalAmount, 0);
   const lowStockProducts = products.filter(p => p.stock <= 10);
   
+  // Real Performance Calculation
+  const performanceInfo = useMemo(() => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonth = lastMonthDate.getMonth();
+    const lastMonthYear = lastMonthDate.getFullYear();
+
+    let curAmount = 0;
+    let prevAmount = 0;
+
+    sales.forEach(sale => {
+      const sDate = sale.date?.toDate ? sale.date.toDate() : new Date(sale.date);
+      if (sDate.getMonth() === currentMonth && sDate.getFullYear() === currentYear) {
+        curAmount += sale.totalAmount;
+      } else if (sDate.getMonth() === lastMonth && sDate.getFullYear() === lastMonthYear) {
+        prevAmount += sale.totalAmount;
+      }
+    });
+
+    const percent = prevAmount > 0 ? ((curAmount - prevAmount) / prevAmount) * 100 : (curAmount > 0 ? 100 : 0);
+    return { 
+      percent: parseFloat(percent.toFixed(1)), 
+      curAmount, 
+      prevAmount,
+      isUp: percent >= 0
+    };
+  }, [sales]);
+
   // Chart Data
   const salesByDate = sales.reduce((acc: any, sale) => {
     const date = formatDate(sale.date).split(',')[0];
@@ -1398,13 +1429,25 @@ function Dashboard({ products, sales, userProfile }: { products: Product[], sale
           <h2 className="text-2xl font-bold text-gray-900">Halo, {userProfile?.displayName}! 👋</h2>
           <p className="text-gray-500 text-sm font-medium">Berikut ringkasan bisnis Anda hari ini.</p>
         </div>
-        <div className="flex items-center gap-3 bg-blue-50/50 p-3 rounded-2xl border border-blue-100">
-          <div className="p-2 bg-blue-600 rounded-xl shadow-lg shadow-blue-200">
-            <TrendingUp className="w-5 h-5 text-white" />
+        <div className={cn(
+          "flex items-center gap-3 p-3 rounded-2xl border transition-colors",
+          performanceInfo.isUp ? "bg-blue-50/50 border-blue-100" : "bg-red-50/50 border-red-100"
+        )}>
+          <div className={cn(
+            "p-2 rounded-xl shadow-lg",
+            performanceInfo.isUp ? "bg-blue-600 shadow-blue-200" : "bg-red-600 shadow-red-200"
+          )}>
+            {performanceInfo.isUp ? <TrendingUp className="w-5 h-5 text-white" /> : <TrendingDown className="w-5 h-5 text-white" />}
           </div>
           <div>
-            <p className="text-[10px] text-blue-600 font-black uppercase tracking-widest">Performa</p>
-            <p className="text-base font-black text-gray-900">+12.5% <span className="text-[10px] font-bold text-gray-400">vs bln lalu</span></p>
+            <p className={cn(
+              "text-[10px] font-black uppercase tracking-widest",
+              performanceInfo.isUp ? "text-blue-600" : "text-red-600"
+            )}>Performa</p>
+            <p className="text-base font-black text-gray-900">
+              {performanceInfo.percent > 0 ? '+' : ''}{performanceInfo.percent}% 
+              <span className="text-[10px] font-bold text-gray-400 ml-1">vs bln lalu</span>
+            </p>
           </div>
         </div>
       </div>
@@ -1416,7 +1459,7 @@ function Dashboard({ products, sales, userProfile }: { products: Product[], sale
           value={formatCurrency(totalSales)} 
           icon={TrendingUp} 
           color="bg-blue-600"
-          trend={12}
+          trend={performanceInfo.percent}
           className="col-span-2 lg:col-span-1"
         />
         <StatCard 
